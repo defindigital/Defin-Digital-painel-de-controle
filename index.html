@@ -309,6 +309,13 @@ function isMonthClosed(monthLabel, cycleStartDay){
   const todayUTC = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
   return todayUTC > end;
 }
+// Além do fim do ciclo pela data, o admin pode travar o mês na hora —
+// assim que clica em "Gerar PDF", os números viram definitivos e a
+// sincronização automática para de poder sobrescrevê-los.
+function isSyncLocked(month, cycleStartDay){
+  if (!month) return false;
+  return isMonthClosed(month.month_label, cycleStartDay) || !!month.report_locked;
+}
 const PROCESS_STATUS_LABEL = {implementacao:"Processo em implementação", andamento:"Processo em andamento", validado:"Processo validado"};
 const PROCESS_WEEKS = {
   1: "Semana 1 — Diagnóstico, organização do perfil, ajuste de posicionamento, definição dos pilares e calendário.",
@@ -989,6 +996,16 @@ function renderAdmin(){
         </div>
         <p class="panel-sub" id="clientLogoStatus" style="margin-top:8px"></p>
       </div>
+      <div class="panel">
+        <h3>Print do site</h3>
+        <p class="panel-sub">Opcional. Aparece no PDF do relatório, logo depois dos entregáveis do mês.</p>
+        <div class="logo-upload-row">
+          ${currentClient && currentClient.site_screenshot_url ? `<img class="logo-preview" src="${currentClient.site_screenshot_url}" alt="">` : `<div class="logo-preview"></div>`}
+          <input type="file" id="clientSiteShotInput" accept="image/*">
+          <button class="save" id="uploadClientSiteShotBtn">Salvar print</button>
+        </div>
+        <p class="panel-sub" id="clientSiteShotStatus" style="margin-top:8px"></p>
+      </div>
       <div class="panel danger-zone">
         <h3>Zona de perigo</h3>
         <p class="panel-sub">Excluir o cliente apaga o login dele, todos os meses, métricas, calendário e checklist. Essa ação não pode ser desfeita.</p>
@@ -1034,6 +1051,7 @@ function renderAdmin(){
     const r = state.monthlyReport || {};
     tabContent = `<div class="panel"><h3>Relatório mensal — ${m.month_label}</h3>
       <p class="panel-sub">O PDF gerado segue o resumo do mês, as entregas, as métricas de cada canal (comparadas com o mês anterior) e o campo abaixo. Só você consegue gerar.</p>
+      ${m.report_locked ? `<p class="panel-sub frozen-note">🔒 Relatório já gerado para este mês — os números de redes sociais ficaram congelados a partir de agora.</p>` : ""}
       <label class="field-label">Para o próximo mês<textarea data-report="proximo_mes" rows="4">${r.proximo_mes||""}</textarea></label>
       <button class="save" id="saveReportBtn">Salvar</button>
       <button class="save" id="generateReportPdfBtn" style="background:var(--ink);margin-left:10px">Gerar PDF</button>
@@ -1091,13 +1109,14 @@ function metaSyncPanelHtml(client){
     .map(d => d && d.last_synced_at ? new Date(d.last_synced_at) : null)
     .filter(Boolean)
     .sort((a,b)=>b-a)[0];
-  const closed = state.selectedMonth ? isMonthClosed(state.selectedMonth.month_label, client.cycle_start_day) : false;
+  const closed = state.selectedMonth ? isSyncLocked(state.selectedMonth, client.cycle_start_day) : false;
+  const lockedByReport = state.selectedMonth && state.selectedMonth.report_locked;
   const syncDisabled = (!igId && !fbId) || closed;
   return `<div class="panel sync-panel">
     <h3>Sincronização automática — Instagram / Facebook</h3>
     <p class="panel-sub">Preenche os campos abaixo puxando direto da Meta, sem precisar digitar. Configure os IDs uma vez.</p>
     <p class="panel-sub">Período sincronizado: <strong>${state.selectedMonth ? periodRangeLabel(state.selectedMonth.month_label, client.cycle_start_day) : "—"}</strong> (mesmo período do mês selecionado acima, dia ${client.cycle_start_day || 23} a dia ${client.cycle_start_day || 23})</p>
-    ${closed ? `<p class="panel-sub frozen-note">🔒 Este ciclo já se encerrou — os números ficam congelados com o que foi registrado no relatório. A sincronização automática volta a ficar disponível no mês vigente.</p>` : ""}
+    ${closed ? `<p class="panel-sub frozen-note">🔒 ${lockedByReport ? "Relatório já gerado para este mês" : "Este ciclo já se encerrou"} — os números ficam congelados. A sincronização automática volta a ficar disponível no mês vigente.</p>` : ""}
     <div class="admin-field-grid" style="grid-template-columns:repeat(2,1fr)">
       <label class="field-label">ID da Página do Facebook<input type="text" id="fbPageIdInput" data-clientfield="fb_page_id" value="${fbId}" placeholder="ex: 1403992442789946"></label>
       <label class="field-label">ID da conta comercial do Instagram<input type="text" id="igBizIdInput" data-clientfield="ig_business_id" value="${igId}" placeholder="ex: 17841407177582733"></label>
@@ -1356,6 +1375,35 @@ function bindAdminHandlers(){
       }
     };
   }
+  const uploadClientSiteShotBtn = document.getElementById("uploadClientSiteShotBtn");
+  if (uploadClientSiteShotBtn){
+    uploadClientSiteShotBtn.onclick = async () => {
+      const input = document.getElementById("clientSiteShotInput");
+      const statusEl = document.getElementById("clientSiteShotStatus");
+      const file = input.files[0];
+      if (!file){ if (statusEl) statusEl.textContent = "Escolha uma imagem primeiro."; return; }
+      uploadClientSiteShotBtn.disabled = true;
+      uploadClientSiteShotBtn.textContent = "Enviando…";
+      try {
+        const ext = (file.name.split(".").pop() || "png").toLowerCase();
+        const path = `${state.selectedClientId}/site-screenshot.${ext}`;
+        const { error: upErr } = await sb.storage.from("client-logos").upload(path, file, { upsert: true, contentType: file.type });
+        if (upErr) throw upErr;
+        const { data: pub } = sb.storage.from("client-logos").getPublicUrl(path);
+        const site_screenshot_url = pub.publicUrl + "?v=" + Date.now();
+        const { error } = await sb.from("clients").update({ site_screenshot_url }).eq("id", state.selectedClientId);
+        if (error) throw error;
+        const client = state.clients.find(c => c.id === state.selectedClientId);
+        if (client) client.site_screenshot_url = site_screenshot_url;
+        if (statusEl) statusEl.textContent = "Print salvo!";
+        renderAdmin();
+      } catch (e) {
+        if (statusEl) statusEl.textContent = "Erro ao enviar: " + (e.message || e);
+        uploadClientSiteShotBtn.disabled = false;
+        uploadClientSiteShotBtn.textContent = "Salvar print";
+      }
+    };
+  }
   const deleteClientBtn = document.getElementById("deleteClientBtn");
   if (deleteClientBtn){
     deleteClientBtn.onclick = () => {
@@ -1576,7 +1624,22 @@ function bindAdminTailHandlers(){
     if (error) { alert("Erro ao salvar antes de gerar o PDF: " + error.message); return; }
     state.monthlyReport = data;
     const client = state.clients.find(c => c.id === state.selectedClientId);
-    generateReportPdf(client, state.selectedMonth, data);
+    generateReportPdfBtn.disabled = true;
+    generateReportPdfBtn.textContent = "Gerando…";
+    try {
+      await generateReportPdf(client, state.selectedMonth, data);
+      // Trava o mês: a partir daqui os números deste ciclo são definitivos
+      // e a sincronização automática para de poder sobrescrevê-los.
+      if (!state.selectedMonth.report_locked){
+        await sb.from("deliverable_months").update({ report_locked: true, relatorio_done: true }).eq("id", state.selectedMonth.id);
+        state.selectedMonth.report_locked = true;
+        state.selectedMonth.relatorio_done = true;
+      }
+    } finally {
+      generateReportPdfBtn.disabled = false;
+      generateReportPdfBtn.textContent = "Gerar PDF";
+      renderAdmin();
+    }
   };
   const clientSelect = document.getElementById("clientSelect");
   if (clientSelect) clientSelect.onchange = async (e) => {
@@ -1592,7 +1655,20 @@ function pctChange(before, after){
   return (d>=0?"+":"") + Math.round(d) + "%";
 }
 
-function generateReportPdf(client, month, report){
+async function urlToDataUrl(url){
+  try {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch (e) { return null; }
+}
+
+async function generateReportPdf(client, month, report){
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const pageW = 595, pageH = 842, margin = 48, contentW = pageW - margin*2;
@@ -1733,6 +1809,25 @@ function generateReportPdf(client, month, report){
     y += 8;
   }
 
+  // ---------------- PRINT DO SITE (opcional) ----------------
+  if (client.site_screenshot_url){
+    const dataUrl = await urlToDataUrl(client.site_screenshot_url);
+    if (dataUrl){
+      try {
+        const imgProps = doc.getImageProperties(dataUrl);
+        const imgW = contentW, imgH = Math.min(contentW * (imgProps.height/imgProps.width), 260);
+        newPageIfNeeded(imgH + 24);
+        doc.setDrawColor(...grid); doc.setLineWidth(0.75);
+        doc.addImage(dataUrl, imgProps.fileType || "PNG", margin, y, imgW, imgH);
+        doc.rect(margin, y, imgW, imgH, "D");
+        y += imgH + 8;
+        doc.setFont("helvetica","normal"); doc.setFontSize(8.5); doc.setTextColor(...inkSoft);
+        doc.text(`Site criado para o cliente${client.site_url ? " — " + client.site_url : ""}`, margin, y);
+        y += 20;
+      } catch(e) {}
+    }
+  }
+
   // ---------------- CONTEÚDO PRODUZIDO x META ----------------
   sectionTitle("Conteúdo produzido no mês (feito / meta)");
   statCards([
@@ -1759,10 +1854,14 @@ function generateReportPdf(client, month, report){
     statCards(metrics.map(([field,lbl]) => ({
       num: fmtNum(cur[field]), label: lbl, sub: prev ? pctChange(prev[field], cur[field]) : null
     })));
-    if (prev){
-      barPairs(metrics.slice(0,3).map(([field,lbl]) => ({ label: lbl, before: prev[field]||0, after: cur[field]||0 })));
-    } else {
-      bodyText("Sem dados do mês anterior para comparação.");
+    // Gráfico de barras antes/agora só no Instagram — Facebook e LinkedIn
+    // ficam só com os cartões, igual ao modelo de relatório combinado.
+    if (key === "instagram"){
+      if (prev){
+        barPairs(metrics.slice(0,3).map(([field,lbl]) => ({ label: lbl, before: prev[field]||0, after: cur[field]||0 })));
+      } else {
+        bodyText("Sem dados do mês anterior para comparação.");
+      }
     }
     if (cur.note) bodyText(cur.note);
   });
