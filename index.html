@@ -93,7 +93,8 @@ button,input,select,textarea{font-family:inherit}
 .client-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px;cursor:pointer;box-shadow:var(--shadow-sm);transition:transform .15s,box-shadow .15s,border-color .15s}
 .client-card:hover{transform:translateY(-3px);box-shadow:var(--shadow-lg);border-color:var(--cyan)}
 .client-card-top{display:flex;align-items:center;gap:12px;margin-bottom:12px}
-.client-card-avatar{width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,var(--cyan),var(--cyan-deep));color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:17px;font-family:'Space Grotesk',sans-serif;flex-shrink:0}
+.client-card-avatar{width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,var(--cyan),var(--cyan-deep));color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:17px;font-family:'Space Grotesk',sans-serif;flex-shrink:0;overflow:hidden}
+.client-card-avatar img{width:100%;height:100%;object-fit:cover}
 .client-card-name{font-weight:700;font-size:15px}
 .client-card-area{color:var(--ink-soft);font-size:12px;margin-top:2px}
 .client-card-status{display:inline-block;font-size:11px;font-weight:600;color:var(--cyan-deep);background:var(--cyan-soft);padding:3px 10px;border-radius:999px;margin-bottom:10px}
@@ -170,6 +171,21 @@ button,input,select,textarea{font-family:inherit}
 .sync-btn{background:var(--ink) !important;margin-left:8px}
 .sync-btn:hover{background:#000 !important}
 .sync-btn:disabled{opacity:.6;cursor:default}
+.frozen-note{color:#9a5a12;background:#fbe8cc;padding:8px 12px;border-radius:8px;display:inline-block}
+.client-logo-chip{width:22px;height:22px;border-radius:7px;object-fit:cover;margin-right:8px;vertical-align:middle;border:1px solid rgba(255,255,255,.4)}
+.danger-zone{border:1px dashed #d64545;background:#fdf1f1}
+.danger-zone h3{color:#b02a2a}
+.danger-btn{background:#d64545 !important}
+.danger-btn:hover{background:#b02a2a !important}
+.confirm-overlay{position:fixed;inset:0;background:rgba(11,20,32,.55);display:flex;align-items:center;justify-content:center;z-index:999;padding:16px}
+.confirm-card{background:var(--surface);border-radius:var(--radius-lg);padding:28px;max-width:420px;width:100%;box-shadow:var(--shadow-lg)}
+.confirm-card h2{margin:0 0 10px;font-size:19px;font-family:'Space Grotesk',sans-serif;color:#b02a2a}
+.confirm-card p{color:var(--ink-soft);font-size:14px;line-height:1.5}
+.confirm-card input{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;margin:10px 0}
+.confirm-card-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:10px}
+.confirm-cancel-btn{background:var(--surface2);color:var(--ink);border:1px solid var(--border);padding:10px 16px;border-radius:999px;cursor:pointer;font-weight:600}
+.logo-upload-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.logo-preview{width:56px;height:56px;border-radius:14px;object-fit:cover;border:1px solid var(--border);background:var(--surface2)}
 .sync-badge{display:inline-block;margin-left:10px;font-size:11px;font-weight:600;color:var(--cyan-deep);background:var(--cyan-soft);padding:2px 8px;border-radius:999px;vertical-align:middle}
 
 /* ---- cartões de rede social (cada rede com identidade própria) ---- */
@@ -282,6 +298,17 @@ function periodRangeLabel(monthLabel, cycleStartDay){
   const { start, end } = monthPeriodRange(monthLabel, cycleStartDay);
   return `${fmtDatePt(start)} a ${fmtDatePt(end)}`;
 }
+// Um mês fica "encerrado" assim que a data de hoje passa do fim do período
+// de referência dele (dia do ciclo). A partir daí, os números de seguidores
+// desse mês ficam congelados — a Meta só entrega o total ATUAL de seguidores,
+// então sincronizar um mês já encerrado sobrescreveria o histórico com o
+// número de hoje, que já pertence ao próximo ciclo.
+function isMonthClosed(monthLabel, cycleStartDay){
+  const { end } = monthPeriodRange(monthLabel, cycleStartDay);
+  const now = new Date();
+  const todayUTC = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+  return todayUTC > end;
+}
 const PROCESS_STATUS_LABEL = {implementacao:"Processo em implementação", andamento:"Processo em andamento", validado:"Processo validado"};
 const PROCESS_WEEKS = {
   1: "Semana 1 — Diagnóstico, organização do perfil, ajuste de posicionamento, definição dos pilares e calendário.",
@@ -300,7 +327,7 @@ const REPORT_SECTIONS = [
 ];
 const app = document.getElementById("app");
 
-let state = { session:null, profile:null, clients:[], selectedClientId:null, months:[], selectedMonth:null, checklist:[], calendarPosts:[], socialInsights:{}, prevSocialInsights:{}, prevMonth:null, monthlyReport:null, proposal:null, billing:null, tab:"resumo", adminTab:"entregaveis", adminView:"hub", hubTab:"lista", recoveryMode:false, forceChangePassword:false, welcomeShown:false };
+let state = { session:null, profile:null, clients:[], selectedClientId:null, months:[], selectedMonth:null, checklist:[], calendarPosts:[], socialInsights:{}, prevSocialInsights:{}, prevMonth:null, monthlyReport:null, proposal:null, billing:null, metaAdsData:null, gmnData:null, tab:"resumo", adminTab:"entregaveis", adminView:"hub", hubTab:"lista", recoveryMode:false, forceChangePassword:false, welcomeShown:false };
 
 async function init(){
   // Detecta se o usuário chegou aqui por um link de recuperação de senha
@@ -345,10 +372,13 @@ async function loadMonthsFor(clientId, isAdmin){
     await loadSocialInsights(state.selectedMonth.id);
     await loadChecklist(state.selectedMonth.id);
     await loadMonthlyReport(state.selectedMonth.id);
+    await loadMetaAdsData(state.selectedMonth.id);
+    await loadGmnData(state.selectedMonth.id);
     await loadPreviousMonthData(clientId, state.selectedMonth);
     if (isAdmin) await ensureSocialInsightRows(state.selectedMonth.id, clientId);
   } else {
     state.checklist = []; state.monthlyReport = null; state.prevSocialInsights = {}; state.prevMonth = null;
+    state.metaAdsData = null; state.gmnData = null;
   }
 }
 
@@ -401,6 +431,15 @@ async function loadMonthlyReport(monthId){
   state.monthlyReport = data || null;
 }
 
+async function loadMetaAdsData(monthId){
+  const { data } = await sb.from("meta_ads_data").select("*").eq("deliverable_month_id", monthId).maybeSingle();
+  state.metaAdsData = data || null;
+}
+async function loadGmnData(monthId){
+  const { data } = await sb.from("gmn_data").select("*").eq("deliverable_month_id", monthId).maybeSingle();
+  state.gmnData = data || null;
+}
+
 async function loadSocialInsights(monthId){
   const { data } = await sb.from("social_insights").select("*").eq("deliverable_month_id", monthId);
   state.socialInsights = {};
@@ -431,8 +470,10 @@ async function loadClientData(clientId){
     await loadSocialInsights(state.selectedMonth.id);
     await loadChecklist(state.selectedMonth.id);
     await loadMonthlyReport(state.selectedMonth.id);
+    await loadMetaAdsData(state.selectedMonth.id);
+    await loadGmnData(state.selectedMonth.id);
   } else {
-    state.checklist = []; state.monthlyReport = null;
+    state.checklist = []; state.monthlyReport = null; state.metaAdsData = null; state.gmnData = null;
   }
 }
 
@@ -541,7 +582,7 @@ function topbarHtml(isAdmin, opts){
   const c = state.profile.clients;
   return `<div class="topbar"><div class="topbar-inner">
     <div class="topbar-logo"><img src="${LOGO_DATA_URI}" alt="Defin Digital"></div>
-    <div class="topbar-client">${c.name}</div>
+    <div class="topbar-client">${c.logo_url ? `<img class="client-logo-chip" src="${c.logo_url}" alt="">` : ""}${c.name}</div>
     <div class="topbar-spacer"></div>
     <button class="logout-btn" id="logoutBtn">Sair</button>
   </div></div>`;
@@ -612,9 +653,17 @@ function renderClient(){
         <div class="checklist-row ${it.done?"done":""}">
           <span class="checklist-check">${it.done?"✔":"○"}</span><span>${it.title}</span>
         </div>`).join("")}</div></div>`;
+  } else if (state.tab === "metaads"){
+    tabContent = metaAdsFormHtml(false);
+  } else if (state.tab === "gmn"){
+    tabContent = gmnFormHtml(false);
   } else if (state.tab === "proposta"){
     tabContent = proposalHtml(false);
   }
+
+  const services = c.services || [];
+  const metaAdsTab = services.includes("meta_ads") ? `<button data-tab="metaads" class="${state.tab==="metaads"?"active":""}">Meta Ads</button>` : "";
+  const gmnTab = services.includes("gmn") ? `<button data-tab="gmn" class="${state.tab==="gmn"?"active":""}">Google Meu Negócio</button>` : "";
 
   app.innerHTML = topbarHtml(false) + `<div class="shell">
     ${processBannerHtml(c)}
@@ -624,6 +673,7 @@ function renderClient(){
       <button data-tab="resumo" class="${state.tab==="resumo"?"active":""}">Resumo</button>
       <button data-tab="calendario" class="${state.tab==="calendario"?"active":""}">Calendário</button>
       <button data-tab="redes" class="${state.tab==="redes"?"active":""}">Redes sociais</button>
+      ${metaAdsTab}${gmnTab}
       <button data-tab="checklist" class="${state.tab==="checklist"?"active":""}">Planejamento</button>
       <button data-tab="proposta" class="${state.tab==="proposta"?"active":""}">Proposta</button>
     </div>
@@ -660,6 +710,52 @@ function showWelcomeModal(name){
   const close = () => el.remove();
   document.getElementById("welcomeCloseBtn").onclick = close;
   el.onclick = (e) => { if (e.target === el) close(); };
+}
+
+function showDeleteClientModal(client){
+  const el = document.createElement("div");
+  el.className = "confirm-overlay";
+  el.innerHTML = `<div class="confirm-card">
+    <h2>Excluir ${client.name}?</h2>
+    <p>Isso apaga o login do cliente, todos os meses, métricas de redes sociais, calendário e checklist. <strong>Não pode ser desfeito.</strong></p>
+    <p>Para confirmar, digite o nome do cliente abaixo:</p>
+    <input type="text" id="deleteConfirmInput" placeholder="${client.name}" autocomplete="off">
+    <p id="deleteConfirmError" class="login-error"></p>
+    <div class="confirm-card-actions">
+      <button class="confirm-cancel-btn" id="deleteCancelBtn">Cancelar</button>
+      <button class="save danger-btn" id="deleteConfirmBtn">Excluir definitivamente</button>
+    </div>
+  </div>`;
+  document.body.appendChild(el);
+  const close = () => el.remove();
+  document.getElementById("deleteCancelBtn").onclick = close;
+  el.onclick = (e) => { if (e.target === el) close(); };
+  document.getElementById("deleteConfirmBtn").onclick = async () => {
+    const typed = document.getElementById("deleteConfirmInput").value.trim();
+    const errEl = document.getElementById("deleteConfirmError");
+    if (typed !== client.name){ errEl.textContent = "O nome digitado não confere."; return; }
+    const btn = document.getElementById("deleteConfirmBtn");
+    btn.disabled = true; btn.textContent = "Excluindo…";
+    try {
+      const { data: sessionData } = await sb.auth.getSession();
+      const { data, error } = await sb.functions.invoke("delete-client", {
+        body: { client_id: client.id },
+        headers: { Authorization: `Bearer ${sessionData.session.access_token}` }
+      });
+      if (error) throw error;
+      if (data && data.error) throw new Error(data.error);
+      state.clients = state.clients.filter(c => c.id !== client.id);
+      if (state.selectedClientId === client.id){
+        state.selectedClientId = state.clients.length ? state.clients[0].id : null;
+        state.adminView = "hub"; state.hubTab = "lista";
+      }
+      close();
+      render();
+    } catch (e) {
+      errEl.textContent = "Erro ao excluir: " + (e.message || e);
+      btn.disabled = false; btn.textContent = "Excluir definitivamente";
+    }
+  };
 }
 
 function metricCard(label, done, target){
@@ -813,9 +909,10 @@ function clientListHtml(){
     const services = (c.services && c.services.length ? c.services : ["redes_sociais"])
       .map(s => `<span class="svc-tag">${SERVICE_LABELS[s] || s}</span>`).join("");
     const statusLabel = PROCESS_STATUS_LABEL[c.process_status] || "";
+    const avatar = c.logo_url ? `<img src="${c.logo_url}" alt="">` : (c.name||"?").charAt(0).toUpperCase();
     return `<div class="client-card" data-selectclient="${c.id}">
       <div class="client-card-top">
-        <div class="client-card-avatar">${(c.name||"?").charAt(0).toUpperCase()}</div>
+        <div class="client-card-avatar">${avatar}</div>
         <div>
           <div class="client-card-name">${c.name}</div>
           <div class="client-card-area">${c.area_atuacao || "Área não informada"}</div>
@@ -882,7 +979,21 @@ function renderAdmin(){
         ${checkField("redes_sociais_done","Redes sociais",m.redes_sociais_done)}${checkField("site_done","Site",m.site_done)}
         ${checkField("gestao_done","Gestão",m.gestao_done)}${checkField("video_done","Conteúdo em vídeo",m.video_done)}
         ${checkField("relatorio_done","Relatório",m.relatorio_done)}
-      </div></div>`;
+      </div></div>
+      <div class="panel">
+        <h3>Logo do cliente</h3>
+        <div class="logo-upload-row">
+          ${currentClient && currentClient.logo_url ? `<img class="logo-preview" src="${currentClient.logo_url}" alt="">` : `<div class="logo-preview"></div>`}
+          <input type="file" id="clientLogoInput" accept="image/*">
+          <button class="save" id="uploadClientLogoBtn">Salvar logo</button>
+        </div>
+        <p class="panel-sub" id="clientLogoStatus" style="margin-top:8px"></p>
+      </div>
+      <div class="panel danger-zone">
+        <h3>Zona de perigo</h3>
+        <p class="panel-sub">Excluir o cliente apaga o login dele, todos os meses, métricas, calendário e checklist. Essa ação não pode ser desfeita.</p>
+        <button class="save danger-btn" id="deleteClientBtn">🗑 Excluir cliente</button>
+      </div>`;
   } else if (m && state.adminTab === "calendario"){
     tabContent = `<div class="panel"><h3>Calendário — ${m.month_label}</h3>
       ${monthCalendarGridHtml(m.month_label, state.calendarPosts)}
@@ -940,9 +1051,17 @@ function renderAdmin(){
       <button class="save" id="saveSummaryBtn">Salvar resumo</button>
       <h3 style="margin-top:24px">Comentário do cliente</h3>
       <p class="panel-sub">${m.client_comment || "O cliente ainda não comentou neste mês."}</p></div>`;
+  } else if (m && state.adminTab === "metaads"){
+    tabContent = metaAdsFormHtml(true);
+  } else if (m && state.adminTab === "gmn"){
+    tabContent = gmnFormHtml(true);
   } else if (state.adminTab === "proposta"){
     tabContent = proposalHtml(true);
   }
+
+  const services = (currentClient && currentClient.services) || [];
+  const metaAdsTab = services.includes("meta_ads") ? `<button data-admintab="metaads" class="${state.adminTab==="metaads"?"active":""}">Meta Ads</button>` : "";
+  const gmnTab = services.includes("gmn") ? `<button data-admintab="gmn" class="${state.adminTab==="gmn"?"active":""}">Google Meu Negócio</button>` : "";
 
   app.innerHTML = topbarHtml(true) + `<div class="shell">
     ${currentClient ? processStatusAdminHtml(currentClient) : ""}
@@ -951,6 +1070,7 @@ function renderAdmin(){
       <button data-admintab="entregaveis" class="${state.adminTab==="entregaveis"?"active":""}">Entregáveis</button>
       <button data-admintab="calendario" class="${state.adminTab==="calendario"?"active":""}">Calendário</button>
       <button data-admintab="redes" class="${state.adminTab==="redes"?"active":""}">Redes sociais</button>
+      ${metaAdsTab}${gmnTab}
       <button data-admintab="checklist" class="${state.adminTab==="checklist"?"active":""}">Checklist</button>
       <button data-admintab="relatorio" class="${state.adminTab==="relatorio"?"active":""}">Relatório</button>
       <button data-admintab="resumo" class="${state.adminTab==="resumo"?"active":""}">Resumo / Cliente</button>
@@ -971,16 +1091,19 @@ function metaSyncPanelHtml(client){
     .map(d => d && d.last_synced_at ? new Date(d.last_synced_at) : null)
     .filter(Boolean)
     .sort((a,b)=>b-a)[0];
+  const closed = state.selectedMonth ? isMonthClosed(state.selectedMonth.month_label, client.cycle_start_day) : false;
+  const syncDisabled = (!igId && !fbId) || closed;
   return `<div class="panel sync-panel">
     <h3>Sincronização automática — Instagram / Facebook</h3>
     <p class="panel-sub">Preenche os campos abaixo puxando direto da Meta, sem precisar digitar. Configure os IDs uma vez.</p>
     <p class="panel-sub">Período sincronizado: <strong>${state.selectedMonth ? periodRangeLabel(state.selectedMonth.month_label, client.cycle_start_day) : "—"}</strong> (mesmo período do mês selecionado acima, dia ${client.cycle_start_day || 23} a dia ${client.cycle_start_day || 23})</p>
+    ${closed ? `<p class="panel-sub frozen-note">🔒 Este ciclo já se encerrou — os números ficam congelados com o que foi registrado no relatório. A sincronização automática volta a ficar disponível no mês vigente.</p>` : ""}
     <div class="admin-field-grid" style="grid-template-columns:repeat(2,1fr)">
       <label class="field-label">ID da Página do Facebook<input type="text" id="fbPageIdInput" data-clientfield="fb_page_id" value="${fbId}" placeholder="ex: 1403992442789946"></label>
       <label class="field-label">ID da conta comercial do Instagram<input type="text" id="igBizIdInput" data-clientfield="ig_business_id" value="${igId}" placeholder="ex: 17841407177582733"></label>
     </div>
     <button class="save" id="saveMetaIdsBtn">Salvar IDs</button>
-    <button class="save sync-btn" id="syncMetaBtn" ${(!igId && !fbId)?"disabled":""}>🔄 Sincronizar agora</button>
+    <button class="save sync-btn" id="syncMetaBtn" ${syncDisabled?"disabled":""} title="${closed?"Ciclo encerrado — sincronização bloqueada":""}">🔄 Sincronizar agora</button>
     <p class="panel-sub" id="syncStatus" style="margin-top:10px">${lastSync ? "Última sincronização: " + lastSync.toLocaleString("pt-BR") : "Ainda não sincronizado."}</p>
   </div>`;
 }
@@ -999,6 +1122,9 @@ function newClientFormHtml(){
       <label class="field-label">Dia de início do ciclo (1 a 28)<input type="number" id="newClientCycleDay" min="1" max="28" placeholder="23 (padrão)"></label>
       <label class="field-label">Mensalidade (R$)<input type="number" id="newClientFee" step="0.01" placeholder="0,00"></label>
     </div>
+    <h3 style="margin-top:20px">Logo do cliente</h3>
+    <p class="panel-sub">Opcional. Aparece discretamente no card do cliente e no painel dele.</p>
+    <input type="file" id="newClientLogo" accept="image/*">
     <h3 style="margin-top:20px">Serviços contratados</h3>
     <div class="status-row">
       <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="svcRedes" checked> Redes sociais</label>
@@ -1046,6 +1172,60 @@ function socialCardHtml(platformKey, label, data, editable){
       ${SOCIAL_FIELDS.map(([f,lbl]) => `<div class="metric-card"><div class="metric-label">${lbl}</div><div class="metric-value">${f==="growth_pct" ? (data[f]||0)+"%" : (data[f]||0)}</div></div>`).join("")}
     </div>
     <p class="admin-summary-text">${data.note ? data.note : "Sem anotações para este período."}</p>
+  </div>`;
+}
+
+function metaAdsFormHtml(isAdmin){
+  const d = state.metaAdsData || {};
+  if (isAdmin){
+    return `<div class="panel"><h3>Meta Ads — ${state.selectedMonth.month_label}</h3>
+      <p class="panel-sub">Preencha manualmente com os dados do Gerenciador de Anúncios para este período. A integração automática fica para uma próxima etapa.</p>
+      <div class="admin-field-grid">
+        <label class="field-label">Investimento (R$)<input type="number" step="0.01" data-metaads="investimento" value="${d.investimento||0}"></label>
+        <label class="field-label">Alcance<input type="number" data-metaads="alcance" value="${d.alcance||0}"></label>
+        <label class="field-label">Cliques<input type="number" data-metaads="cliques" value="${d.cliques||0}"></label>
+        <label class="field-label">Leads<input type="number" data-metaads="leads" value="${d.leads||0}"></label>
+      </div>
+      <label class="field-label">Anotações<textarea data-metaads="note" rows="3">${d.note||""}</textarea></label>
+      <button class="save" id="saveMetaAdsBtn">Salvar</button>
+    </div>`;
+  }
+  if (!state.metaAdsData) return `<div class="panel"><h3>Meta Ads</h3><p class="panel-sub">Sem dados cadastrados para este período.</p></div>`;
+  return `<div class="panel"><h3>Meta Ads — ${state.selectedMonth.month_label}</h3>
+    <div class="metric-grid">
+      <div class="metric-card"><div class="metric-label">Investimento</div><div class="metric-value">R$ ${(d.investimento||0).toLocaleString("pt-BR",{minimumFractionDigits:2})}</div></div>
+      <div class="metric-card"><div class="metric-label">Alcance</div><div class="metric-value">${d.alcance||0}</div></div>
+      <div class="metric-card"><div class="metric-label">Cliques</div><div class="metric-value">${d.cliques||0}</div></div>
+      <div class="metric-card"><div class="metric-label">Leads</div><div class="metric-value">${d.leads||0}</div></div>
+    </div>
+    <p class="admin-summary-text">${d.note || "Sem anotações para este período."}</p>
+  </div>`;
+}
+
+function gmnFormHtml(isAdmin){
+  const d = state.gmnData || {};
+  if (isAdmin){
+    return `<div class="panel"><h3>Google Meu Negócio — ${state.selectedMonth.month_label}</h3>
+      <p class="panel-sub">Preencha manualmente com os dados do painel do Google Meu Negócio para este período.</p>
+      <div class="admin-field-grid">
+        <label class="field-label">Visualizações do perfil<input type="number" data-gmn="visualizacoes" value="${d.visualizacoes||0}"></label>
+        <label class="field-label">Cliques no site<input type="number" data-gmn="cliques_site" value="${d.cliques_site||0}"></label>
+        <label class="field-label">Solicitações de rota<input type="number" data-gmn="solicitacoes_rota" value="${d.solicitacoes_rota||0}"></label>
+        <label class="field-label">Ligações<input type="number" data-gmn="ligacoes" value="${d.ligacoes||0}"></label>
+      </div>
+      <label class="field-label">Anotações<textarea data-gmn="note" rows="3">${d.note||""}</textarea></label>
+      <button class="save" id="saveGmnBtn">Salvar</button>
+    </div>`;
+  }
+  if (!state.gmnData) return `<div class="panel"><h3>Google Meu Negócio</h3><p class="panel-sub">Sem dados cadastrados para este período.</p></div>`;
+  return `<div class="panel"><h3>Google Meu Negócio — ${state.selectedMonth.month_label}</h3>
+    <div class="metric-grid">
+      <div class="metric-card"><div class="metric-label">Visualizações do perfil</div><div class="metric-value">${d.visualizacoes||0}</div></div>
+      <div class="metric-card"><div class="metric-label">Cliques no site</div><div class="metric-value">${d.cliques_site||0}</div></div>
+      <div class="metric-card"><div class="metric-label">Solicitações de rota</div><div class="metric-value">${d.solicitacoes_rota||0}</div></div>
+      <div class="metric-card"><div class="metric-label">Ligações</div><div class="metric-value">${d.ligacoes||0}</div></div>
+    </div>
+    <p class="admin-summary-text">${d.note || "Sem anotações para este período."}</p>
   </div>`;
 }
 
@@ -1123,6 +1303,64 @@ function bindAdminHandlers(){
         syncMetaBtn.disabled = false;
         syncMetaBtn.textContent = "🔄 Sincronizar agora";
       }
+    };
+  }
+  const saveMetaAdsBtn = document.getElementById("saveMetaAdsBtn");
+  if (saveMetaAdsBtn) saveMetaAdsBtn.onclick = async () => {
+    const payload = { client_id: state.selectedClientId, deliverable_month_id: state.selectedMonth.id };
+    document.querySelectorAll("[data-metaads]").forEach(el => {
+      const f = el.dataset.metaads;
+      payload[f] = f === "note" ? el.value : Number(el.value);
+    });
+    const { data, error } = await sb.from("meta_ads_data").upsert(payload, { onConflict: "deliverable_month_id" }).select().single();
+    if (!error) { state.metaAdsData = data; saveMetaAdsBtn.textContent = "Salvo!"; setTimeout(()=>saveMetaAdsBtn.textContent="Salvar", 1500); }
+    else alert("Erro ao salvar Meta Ads: " + error.message);
+  };
+  const saveGmnBtn = document.getElementById("saveGmnBtn");
+  if (saveGmnBtn) saveGmnBtn.onclick = async () => {
+    const payload = { client_id: state.selectedClientId, deliverable_month_id: state.selectedMonth.id };
+    document.querySelectorAll("[data-gmn]").forEach(el => {
+      const f = el.dataset.gmn;
+      payload[f] = f === "note" ? el.value : Number(el.value);
+    });
+    const { data, error } = await sb.from("gmn_data").upsert(payload, { onConflict: "deliverable_month_id" }).select().single();
+    if (!error) { state.gmnData = data; saveGmnBtn.textContent = "Salvo!"; setTimeout(()=>saveGmnBtn.textContent="Salvar", 1500); }
+    else alert("Erro ao salvar Google Meu Negócio: " + error.message);
+  };
+  const uploadClientLogoBtn = document.getElementById("uploadClientLogoBtn");
+  if (uploadClientLogoBtn){
+    uploadClientLogoBtn.onclick = async () => {
+      const input = document.getElementById("clientLogoInput");
+      const statusEl = document.getElementById("clientLogoStatus");
+      const file = input.files[0];
+      if (!file){ if (statusEl) statusEl.textContent = "Escolha uma imagem primeiro."; return; }
+      uploadClientLogoBtn.disabled = true;
+      uploadClientLogoBtn.textContent = "Enviando…";
+      try {
+        const ext = (file.name.split(".").pop() || "png").toLowerCase();
+        const path = `${state.selectedClientId}/logo.${ext}`;
+        const { error: upErr } = await sb.storage.from("client-logos").upload(path, file, { upsert: true, contentType: file.type });
+        if (upErr) throw upErr;
+        const { data: pub } = sb.storage.from("client-logos").getPublicUrl(path);
+        const logo_url = pub.publicUrl + "?v=" + Date.now();
+        const { error } = await sb.from("clients").update({ logo_url }).eq("id", state.selectedClientId);
+        if (error) throw error;
+        const client = state.clients.find(c => c.id === state.selectedClientId);
+        if (client) client.logo_url = logo_url;
+        if (statusEl) statusEl.textContent = "Logo atualizada!";
+        renderAdmin();
+      } catch (e) {
+        if (statusEl) statusEl.textContent = "Erro ao enviar: " + (e.message || e);
+        uploadClientLogoBtn.disabled = false;
+        uploadClientLogoBtn.textContent = "Salvar logo";
+      }
+    };
+  }
+  const deleteClientBtn = document.getElementById("deleteClientBtn");
+  if (deleteClientBtn){
+    deleteClientBtn.onclick = () => {
+      const client = state.clients.find(c => c.id === state.selectedClientId);
+      if (client) showDeleteClientModal(client);
     };
   }
   const extractLinkedinBtn = document.getElementById("extractLinkedinBtn");
@@ -1226,6 +1464,20 @@ function bindAdminTailHandlers(){
       }).select().single();
       if (clientErr) throw clientErr;
 
+      const logoFile = document.getElementById("newClientLogo").files[0];
+      if (logoFile){
+        if (statusEl) statusEl.textContent = "Cliente criado. Enviando logo…";
+        const ext = (logoFile.name.split(".").pop() || "png").toLowerCase();
+        const path = `${newClient.id}/logo.${ext}`;
+        const { error: logoErr } = await sb.storage.from("client-logos").upload(path, logoFile, { upsert: true, contentType: logoFile.type });
+        if (!logoErr){
+          const { data: pub } = sb.storage.from("client-logos").getPublicUrl(path);
+          const logo_url = pub.publicUrl + "?v=" + Date.now();
+          await sb.from("clients").update({ logo_url }).eq("id", newClient.id);
+          newClient.logo_url = logo_url;
+        }
+      }
+
       if (email && password){
         if (statusEl) statusEl.textContent = "Cliente criado. Criando login…";
         const { data: sessionData } = await sb.auth.getSession();
@@ -1265,7 +1517,7 @@ function bindAdminTailHandlers(){
     }).select().single();
     if (!error){
       state.months.push(data); state.selectedMonth = data; state.calendarPosts=[]; state.socialInsights={};
-      state.checklist = []; state.monthlyReport = null;
+      state.checklist = []; state.monthlyReport = null; state.metaAdsData = null; state.gmnData = null;
       await ensureSocialInsightRows(data.id, state.selectedClientId);
       await loadPreviousMonthData(state.selectedClientId, data);
       renderAdmin();
@@ -1588,6 +1840,8 @@ function bindCommon(isAdmin){
       await loadSocialInsights(month.id);
       await loadChecklist(month.id);
       await loadMonthlyReport(month.id);
+      await loadMetaAdsData(month.id);
+      await loadGmnData(month.id);
       await loadPreviousMonthData(state.selectedClientId, month);
       if (isAdmin) await ensureSocialInsightRows(month.id, state.selectedClientId);
       render();
