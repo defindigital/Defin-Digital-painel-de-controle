@@ -95,6 +95,15 @@ button,input,select,textarea{font-family:inherit}
 .client-card-top{display:flex;align-items:center;gap:12px;margin-bottom:12px}
 .client-card-avatar{width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,var(--cyan),var(--cyan-deep));color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:17px;font-family:'Space Grotesk',sans-serif;flex-shrink:0;overflow:hidden}
 .client-card-avatar img{width:100%;height:100%;object-fit:cover}
+.client-edit-btn{background:var(--surface2);border:1px solid var(--border);color:var(--ink-soft);font-size:12px;padding:5px 10px;border-radius:999px;cursor:pointer;flex-shrink:0}
+.client-edit-btn:hover{border-color:var(--cyan);color:var(--cyan-deep)}
+.confirm-card.wide{max-width:560px;max-height:90vh;overflow:auto}
+.confirm-card.wide h2{color:var(--ink)}
+.confirm-card label.field-label{display:block;font-size:12px;color:var(--ink-soft);margin-top:6px}
+.access-box{border:1px solid var(--border);border-radius:10px;padding:12px;margin-top:12px}
+.access-row{display:flex;gap:8px;align-items:center}
+.access-row input{margin:6px 0}
+.blocked-pill{display:inline-block;font-size:11px;font-weight:600;color:#b02a2a;background:#fdf1f1;padding:3px 10px;border-radius:999px}
 .client-card-name{font-weight:700;font-size:15px}
 .client-card-area{color:var(--ink-soft);font-size:12px;margin-top:2px}
 .client-card-status{display:inline-block;font-size:11px;font-weight:600;color:var(--cyan-deep);background:var(--cyan-soft);padding:3px 10px;border-radius:999px;margin-bottom:10px}
@@ -796,6 +805,121 @@ function showDeleteClientModal(client){
   };
 }
 
+// Edição de cadastro + acesso (e-mail, senha, bloqueio) de um cliente.
+function showEditClientModal(client){
+  const esc = (v) => String(v == null ? "" : v).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;");
+  const el = document.createElement("div");
+  el.className = "confirm-overlay";
+  el.innerHTML = `<div class="confirm-card wide">
+    <h2>Editar ${esc(client.name)}</h2>
+    <label class="field-label">Nome da empresa<input type="text" id="ecName" value="${esc(client.name)}"></label>
+    <label class="field-label">Área de atuação<input type="text" id="ecArea" value="${esc(client.area_atuacao)}"></label>
+    <label class="field-label">Site<input type="text" id="ecSite" value="${esc(client.site_url)}"></label>
+    <label class="field-label">Instagram<input type="text" id="ecIg" value="${esc(client.instagram_url)}"></label>
+    <label class="field-label">Facebook<input type="text" id="ecFb" value="${esc(client.facebook_url)}"></label>
+    <label class="field-label">LinkedIn<input type="text" id="ecLi" value="${esc(client.linkedin_url)}"></label>
+    <label class="field-label">Mensalidade (R$)<input type="number" step="0.01" id="ecFee" value="${esc(client.monthly_fee)}"></label>
+    <p id="ecError" class="login-error"></p>
+    <div class="confirm-card-actions" style="justify-content:flex-start">
+      <button class="save" id="ecSaveBtn">Salvar cadastro</button>
+    </div>
+    <div class="access-box" id="ecAccess"><p class="panel-sub">Carregando acesso…</p></div>
+    <div class="confirm-card-actions"><button class="confirm-cancel-btn" id="ecCloseBtn">Fechar</button></div>
+  </div>`;
+  document.body.appendChild(el);
+  const close = () => el.remove();
+  document.getElementById("ecCloseBtn").onclick = close;
+  el.onclick = (e) => { if (e.target === el) close(); };
+  const errEl = document.getElementById("ecError");
+
+  document.getElementById("ecSaveBtn").onclick = async () => {
+    const name = document.getElementById("ecName").value.trim();
+    if (!name){ errEl.textContent = "O nome não pode ficar vazio."; return; }
+    const payload = {
+      name,
+      area_atuacao: document.getElementById("ecArea").value.trim() || null,
+      site_url: document.getElementById("ecSite").value.trim() || null,
+      instagram_url: document.getElementById("ecIg").value.trim() || null,
+      facebook_url: document.getElementById("ecFb").value.trim() || null,
+      linkedin_url: document.getElementById("ecLi").value.trim() || null,
+      monthly_fee: parseFloat(document.getElementById("ecFee").value) || 0,
+    };
+    const btn = document.getElementById("ecSaveBtn");
+    btn.disabled = true; btn.textContent = "Salvando…"; errEl.textContent = "";
+    const { error } = await sb.from("clients").update(payload).eq("id", client.id);
+    btn.disabled = false; btn.textContent = "Salvar cadastro";
+    if (error){ errEl.textContent = "Erro ao salvar: " + error.message; return; }
+    Object.assign(client, payload);
+    state.clients.sort((a,b) => a.name.localeCompare(b.name));
+    close(); render();
+  };
+
+  async function callAccess(body){
+    const { data: sessionData } = await sb.auth.getSession();
+    const { data, error } = await sb.functions.invoke("manage-client-access", {
+      body: { client_id: client.id, ...body },
+      headers: { Authorization: `Bearer ${sessionData.session.access_token}` }
+    });
+    if (error) throw error;
+    if (data && data.error) throw new Error(data.error);
+    return data;
+  }
+
+  async function loadAccess(){
+    const box = document.getElementById("ecAccess");
+    if (!box) return;
+    try {
+      const { logins } = await callAccess({ action: "status" });
+      if (!logins.length){
+        box.innerHTML = `<strong>Acesso do cliente</strong>
+          <p class="panel-sub">Este cliente ainda não tem login. Crie um abaixo.</p>
+          <input type="email" id="ecNewEmail" placeholder="e-mail de login">
+          <input type="text" id="ecNewPass" placeholder="senha provisória (mín. 6 caracteres)">
+          <button class="save" id="ecCreateLoginBtn">Criar login</button>
+          <p class="panel-sub" id="ecAccessMsg"></p>`;
+        document.getElementById("ecCreateLoginBtn").onclick = async () => {
+          const em = document.getElementById("ecNewEmail").value.trim();
+          const pw = document.getElementById("ecNewPass").value;
+          const msg = document.getElementById("ecAccessMsg");
+          if (!em || pw.length < 6){ msg.textContent = "Preencha e-mail e uma senha de pelo menos 6 caracteres."; return; }
+          try {
+            const { data: sd } = await sb.auth.getSession();
+            const { data, error } = await sb.functions.invoke("create-client-login", {
+              body: { client_id: client.id, email: em, password: pw, full_name: client.name },
+              headers: { Authorization: `Bearer ${sd.session.access_token}` }
+            });
+            if (error) throw error;
+            if (data && data.error) throw new Error(data.error);
+            loadAccess();
+          } catch (e){ msg.textContent = "Erro: " + (e.message || e); }
+        };
+        return;
+      }
+      const lg = logins[0];
+      box.innerHTML = `<strong>Acesso do cliente</strong> ${lg.blocked ? '<span class="blocked-pill">🔒 Bloqueado</span>' : ""}
+        <label class="field-label">E-mail de login
+          <div class="access-row"><input type="email" id="ecEmail" value="${esc(lg.email)}"><button class="save" id="ecEmailBtn">Trocar</button></div></label>
+        <label class="field-label">Nova senha (você define; o cliente pode trocar depois em "esqueci minha senha")
+          <div class="access-row"><input type="text" id="ecPass" placeholder="mín. 6 caracteres"><button class="save" id="ecPassBtn">Definir</button></div></label>
+        <div style="margin-top:8px"><button class="save ${lg.blocked ? "" : "danger-btn"}" id="ecBlockBtn">${lg.blocked ? "Desbloquear acesso" : "Bloquear acesso"}</button></div>
+        <p class="panel-sub" id="ecAccessMsg" style="margin-top:8px"></p>`;
+      const msg = document.getElementById("ecAccessMsg");
+      const run = async (btn, body, okText, reload) => {
+        const label = btn.textContent; btn.disabled = true; btn.textContent = "…"; msg.textContent = "";
+        try { await callAccess(body); msg.textContent = okText; if (reload){ await loadAccess(); const m2 = document.getElementById("ecAccessMsg"); if (m2) m2.textContent = okText; } }
+        catch (e){ msg.textContent = "Erro: " + (e.message || e); }
+        btn.disabled = false; btn.textContent = label;
+      };
+      document.getElementById("ecEmailBtn").onclick = (e) => run(e.target, { action:"set_email", email: document.getElementById("ecEmail").value }, "E-mail atualizado.", true);
+      document.getElementById("ecPassBtn").onclick = (e) => run(e.target, { action:"set_password", password: document.getElementById("ecPass").value }, "Senha atualizada.", false);
+      document.getElementById("ecBlockBtn").onclick = (e) => run(e.target, { action: lg.blocked ? "unblock" : "block" }, lg.blocked ? "Acesso liberado." : "Acesso bloqueado — o cliente não consegue mais entrar.", true);
+    } catch (e){
+      box.innerHTML = `<p class="panel-sub">Não foi possível carregar o acesso: ${esc(e.message || e)}. Confira se a função manage-client-access foi publicada no Supabase.</p>`;
+    }
+  }
+  loadAccess();
+}
+
 function metricCard(label, done, target){
   return `<div class="metric-card"><div class="metric-label">${label} <span style="opacity:.6">(feito/agendado)</span></div>
     <div class="metric-value">${done||0}<span>/${target||0}</span></div>
@@ -951,10 +1075,11 @@ function clientListHtml(){
     return `<div class="client-card" data-selectclient="${c.id}">
       <div class="client-card-top">
         <div class="client-card-avatar">${avatar}</div>
-        <div>
+        <div style="flex:1;min-width:0">
           <div class="client-card-name">${c.name}</div>
           <div class="client-card-area">${c.area_atuacao || "Área não informada"}</div>
         </div>
+        <button class="client-edit-btn" data-editclient="${c.id}" title="Editar cadastro e acesso">✎ Editar</button>
       </div>
       ${statusLabel ? `<div class="client-card-status">${statusLabel}</div>` : ""}
       <div class="client-card-services">${services}</div>
@@ -983,6 +1108,13 @@ function renderAdminHub(){
 function bindHubHandlers(){
   document.querySelectorAll("[data-hubtab]").forEach(btn => {
     btn.onclick = () => { state.hubTab = btn.dataset.hubtab; render(); };
+  });
+  document.querySelectorAll("[data-editclient]").forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const cl = state.clients.find(x => x.id === btn.dataset.editclient);
+      if (cl) showEditClientModal(cl);
+    };
   });
   document.querySelectorAll("[data-selectclient]").forEach(card => {
     card.onclick = async () => {
