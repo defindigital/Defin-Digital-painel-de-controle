@@ -229,6 +229,21 @@ const LOGO_DATA_URI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAggAAADCCAY
 const CHANNEL_LABEL = {instagram:"Instagram",facebook:"Facebook",linkedin:"LinkedIn",tiktok:"TikTok",site:"Site"};
 const TYPE_LABEL = {post:"Post",story:"Story",reel:"Reel",artigo:"Artigo"};
 const SOCIAL_PLATFORMS = [["instagram","Instagram"],["facebook","Facebook"],["linkedin","LinkedIn"]];
+// Canais de redes sociais que o cliente contratou. Cliente sem a lista
+// preenchida (cadastros antigos) continua com os três.
+function platformsFor(client){
+  const ch = client && Array.isArray(client.social_channels) ? client.social_channels : null;
+  if (!ch) return SOCIAL_PLATFORMS;
+  return SOCIAL_PLATFORMS.filter(([key]) => ch.includes(key));
+}
+// Cadastro antigo sem lista de serviços continua mostrando Redes sociais.
+function hasRedes(client){
+  const sv = client && Array.isArray(client.services) ? client.services : [];
+  return sv.length === 0 || sv.includes("redes_sociais");
+}
+function currentClientObj(){
+  return state.clients ? state.clients.find(c => c.id === state.selectedClientId) || null : null;
+}
 const SOCIAL_FIELDS = [["followers","Seguidores totais"],["new_followers","Novos seguidores"],["growth_pct","Crescimento (%)"],["views","Visualizações"],["profile_visits","Visitas ao perfil"],["link_clicks","Cliques no link"],["interactions","Interações"],["views_posts","Visualizações — Posts"],["views_reels","Visualizações — Reels"],["views_stories","Visualizações — Stories"],["reactions","Reações"],["comments","Comentários"],["shares","Compartilhamentos"],["impressions","Impressões"],["search_appearances","Aparições em pesquisas"]];
 const PROPOSAL_LISTS = [["funcoes","Funções de conteúdo"],["canais","Canais e frentes de atuação"],["gestao_items","Itens de gestão"],["indicadores","Indicadores de acompanhamento"]];
 
@@ -284,9 +299,25 @@ function monthCalendarGridHtml(monthLabel, posts){
 }
 // Período de referência do ciclo de trabalho: sempre do dia 23 do mês
 // anterior até o dia 23 do próprio mês (ex: mês "2026-10" = 23/09 a 23/10).
-function monthPeriodRange(monthLabel, cycleStartDay){
-  const day = cycleStartDay || 23;
+// O segundo argumento pode ser o próprio cliente (preferido) ou, por
+// compatibilidade, só o número do dia do ciclo.
+//  - Cliente com "cycle_start_date" (data de início): ciclos de 30 dias
+//    corridos. O mês da data de início é o ciclo 1 (ex: início 01/11 →
+//    "2026-11" = 01/11 a 30/11, "2026-12" = 01/12 a 30/12, e assim por
+//    diante, sempre 30 dias a partir do fim do anterior).
+//  - Cliente antigo (sem data): continua no ciclo do dia fixo (padrão 23).
+function monthPeriodRange(monthLabel, cycleArg){
   const [y, m] = monthLabel.split("-").map(Number);
+  const startDateStr = cycleArg && typeof cycleArg === "object" ? cycleArg.cycle_start_date : null;
+  if (startDateStr){
+    const [sy, sm, sd] = String(startDateStr).slice(0,10).split("-").map(Number);
+    const n = (y * 12 + m) - (sy * 12 + sm);
+    const start = new Date(Date.UTC(sy, sm - 1, sd + 30 * n));
+    const end = new Date(Date.UTC(sy, sm - 1, sd + 30 * n + 29));
+    return { start, end };
+  }
+  const cycleStartDay = cycleArg && typeof cycleArg === "object" ? cycleArg.cycle_start_day : cycleArg;
+  const day = cycleStartDay || 23;
   let py = y, pm = m - 1;
   if (pm === 0){ pm = 12; py = y - 1; }
   const start = new Date(Date.UTC(py, pm - 1, day));
@@ -456,7 +487,7 @@ async function loadSocialInsights(monthId){
 }
 
 async function ensureSocialInsightRows(monthId, clientId){
-  for (const [key] of SOCIAL_PLATFORMS){
+  for (const [key] of platformsFor(currentClientObj())){
     if (!state.socialInsights[key]){
       const { data, error } = await sb.from("social_insights").insert({
         client_id: clientId, deliverable_month_id: monthId, platform: key
@@ -651,7 +682,7 @@ function renderClient(){
           <div class="calendar-status status-${p.status}">${p.status==="publicado"?"Publicado":"Planejado"}</div>
         </div>`).join("")}</div></div>`;
   } else if (state.tab === "redes"){
-    tabContent = SOCIAL_PLATFORMS.map(([key,label]) => socialCardHtml(key, label, state.socialInsights[key], false)).join("");
+    tabContent = platformsFor(c).map(([key,label]) => socialCardHtml(key, label, state.socialInsights[key], false)).join("");
   } else if (state.tab === "checklist"){
     tabContent = `<div class="panel"><h3>Planejamento estratégico — ${m.month_label}</h3>
       ${state.checklist.length ? `<div class="progress-bar-outer"><div class="progress-bar-inner" style="width:${cp.pct}%"></div></div>
@@ -675,11 +706,11 @@ function renderClient(){
   app.innerHTML = topbarHtml(false) + `<div class="shell">
     ${processBannerHtml(c)}
     <div class="client-links">${links}</div>
-    ${monthSwitchHtml(false, c.cycle_start_day)}
+    ${monthSwitchHtml(false, c)}
     <div class="tabs">
       <button data-tab="resumo" class="${state.tab==="resumo"?"active":""}">Resumo</button>
       <button data-tab="calendario" class="${state.tab==="calendario"?"active":""}">Calendário</button>
-      <button data-tab="redes" class="${state.tab==="redes"?"active":""}">Redes sociais</button>
+      ${hasRedes(c) ? `<button data-tab="redes" class="${state.tab==="redes"?"active":""}">Redes sociais</button>` : ""}
       ${metaAdsTab}${gmnTab}
       <button data-tab="checklist" class="${state.tab==="checklist"?"active":""}">Planejamento</button>
       <button data-tab="proposta" class="${state.tab==="proposta"?"active":""}">Proposta</button>
@@ -927,7 +958,7 @@ function clientListHtml(){
       </div>
       ${statusLabel ? `<div class="client-card-status">${statusLabel}</div>` : ""}
       <div class="client-card-services">${services}</div>
-      <div class="client-card-cycle">Ciclo: dia ${c.cycle_start_day || 23}</div>
+      <div class="client-card-cycle">${c.cycle_start_date ? "Início: " + fmtDatePt(new Date(c.cycle_start_date + "T00:00:00Z")) + " (ciclos de 30 dias)" : "Ciclo: dia " + (c.cycle_start_day || 23)}</div>
     </div>`;
   }).join("");
   return `<div class="client-grid">${cards}</div>`;
@@ -975,7 +1006,7 @@ function renderAdmin(){
   const m = state.selectedMonth;
   let tabContent = "";
   if (m && state.adminTab === "entregaveis"){
-    tabContent = `<div class="panel"><h3>Entregáveis — ${m.month_label} <span style="font-weight:400;font-size:13px;color:var(--ink-soft,#64748b)">(${periodRangeLabel(m.month_label, currentClient && currentClient.cycle_start_day)})</span></h3>
+    tabContent = `<div class="panel"><h3>Entregáveis — ${m.month_label} <span style="font-weight:400;font-size:13px;color:var(--ink-soft,#64748b)">(${periodRangeLabel(m.month_label, currentClient)})</span></h3>
       <div class="admin-field-grid">
         ${numField("posts_done","Posts feitos",m.posts_done)}${numField("posts_target","Posts agendados",m.posts_target)}
         ${numField("stories_done","Stories feitos",m.stories_done)}${numField("stories_target","Stories agendados",m.stories_target)}
@@ -987,6 +1018,31 @@ function renderAdmin(){
         ${checkField("gestao_done","Gestão",m.gestao_done)}${checkField("video_done","Conteúdo em vídeo",m.video_done)}
         ${checkField("relatorio_done","Relatório",m.relatorio_done)}
       </div></div>
+      <div class="panel">
+        <h3>Serviços e canais</h3>
+        <p class="panel-sub">Desmarque o que o cliente não contrata mais — a aba e as métricas somem do painel dele, do PDF e da sincronização. Os dados já salvos não são apagados.</p>
+        ${(() => {
+          const cl = currentClient || {}; const sv = cl.services || [];
+          const ch = Array.isArray(cl.social_channels) ? cl.social_channels : ["instagram","facebook","linkedin"];
+          return `<div class="status-row">
+            <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="svcRedesEdit" ${sv.includes("redes_sociais")?"checked":""}> Redes sociais</label>
+            <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="svcMetaAdsEdit" ${sv.includes("meta_ads")?"checked":""}> Gestão de Meta Ads</label>
+            <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="svcGmnEdit" ${sv.includes("gmn")?"checked":""}> Google Meu Negócio</label>
+          </div>
+          <div id="editChannelsBox" style="margin-top:10px;padding-left:4px">
+            <p class="panel-sub" style="margin-bottom:6px">Canais de redes sociais:</p>
+            <div class="status-row">
+              <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="chInstagramEdit" ${ch.includes("instagram")?"checked":""}> Instagram</label>
+              <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="chFacebookEdit" ${ch.includes("facebook")?"checked":""}> Facebook</label>
+              <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="chLinkedinEdit" ${ch.includes("linkedin")?"checked":""}> LinkedIn</label>
+            </div>
+          </div>
+          <label class="field-label" style="margin-top:12px;max-width:260px">Data de início do cliente (ciclos de 30 dias)<input type="date" id="editStartDate" value="${cl.cycle_start_date ? String(cl.cycle_start_date).slice(0,10) : ""}"></label>
+          <p class="panel-sub" style="margin-top:4px">${cl.cycle_start_date ? "" : "Este cliente está no ciclo antigo (dia " + (cl.cycle_start_day || 23) + " a dia " + (cl.cycle_start_day || 23) + "). Preencher a data muda para ciclos de 30 dias a partir dela."}</p>`;
+        })()}
+        <button class="save" id="saveServicesBtn" style="margin-top:10px">Salvar serviços e período</button>
+        <p class="panel-sub" id="servicesStatus" style="margin-top:8px"></p>
+      </div>
       <div class="panel">
         <h3>Logo do cliente</h3>
         <div class="logo-upload-row">
@@ -1031,11 +1087,12 @@ function renderAdmin(){
           </select>
         </div>`).join("")}</div></div>`;
   } else if (m && state.adminTab === "redes"){
-    tabContent = metaSyncPanelHtml(currentClient)
-      + socialCardHtml("instagram", "Instagram", state.socialInsights.instagram, true)
-      + socialCardHtml("facebook", "Facebook", state.socialInsights.facebook, true)
-      + linkedinScreenshotPanelHtml()
-      + socialCardHtml("linkedin", "LinkedIn", state.socialInsights.linkedin, true);
+    const chKeys = platformsFor(currentClient).map(([k]) => k);
+    tabContent = ((chKeys.includes("instagram") || chKeys.includes("facebook")) ? metaSyncPanelHtml(currentClient) : "")
+      + (chKeys.includes("instagram") ? socialCardHtml("instagram", "Instagram", state.socialInsights.instagram, true) : "")
+      + (chKeys.includes("facebook") ? socialCardHtml("facebook", "Facebook", state.socialInsights.facebook, true) : "")
+      + (chKeys.includes("linkedin") ? linkedinScreenshotPanelHtml() + socialCardHtml("linkedin", "LinkedIn", state.socialInsights.linkedin, true) : "")
+      + (chKeys.length ? "" : `<div class="panel"><p class="panel-sub">Nenhum canal de redes sociais selecionado para este cliente. Ative em Entregáveis → Serviços e canais.</p></div>`);
   } else if (m && state.adminTab === "checklist"){
     tabContent = `<div class="panel"><h3>Checklist do planejamento — ${m.month_label}</h3>
       <p class="panel-sub">Cadastre aqui tudo que foi feito de novo neste mês. O cliente vê esta mesma lista na aba de Planejamento.</p>
@@ -1083,11 +1140,11 @@ function renderAdmin(){
 
   app.innerHTML = topbarHtml(true) + `<div class="shell">
     ${currentClient ? processStatusAdminHtml(currentClient) : ""}
-    ${monthSwitchHtml(true, currentClient && currentClient.cycle_start_day)}
+    ${monthSwitchHtml(true, currentClient)}
     <div class="tabs">
       <button data-admintab="entregaveis" class="${state.adminTab==="entregaveis"?"active":""}">Entregáveis</button>
       <button data-admintab="calendario" class="${state.adminTab==="calendario"?"active":""}">Calendário</button>
-      <button data-admintab="redes" class="${state.adminTab==="redes"?"active":""}">Redes sociais</button>
+      ${hasRedes(currentClient) ? `<button data-admintab="redes" class="${state.adminTab==="redes"?"active":""}">Redes sociais</button>` : ""}
       ${metaAdsTab}${gmnTab}
       <button data-admintab="checklist" class="${state.adminTab==="checklist"?"active":""}">Checklist</button>
       <button data-admintab="relatorio" class="${state.adminTab==="relatorio"?"active":""}">Relatório</button>
@@ -1109,13 +1166,13 @@ function metaSyncPanelHtml(client){
     .map(d => d && d.last_synced_at ? new Date(d.last_synced_at) : null)
     .filter(Boolean)
     .sort((a,b)=>b-a)[0];
-  const closed = state.selectedMonth ? isSyncLocked(state.selectedMonth, client.cycle_start_day) : false;
+  const closed = state.selectedMonth ? isSyncLocked(state.selectedMonth, client) : false;
   const lockedByReport = state.selectedMonth && state.selectedMonth.report_locked;
   const syncDisabled = (!igId && !fbId) || closed;
   return `<div class="panel sync-panel">
     <h3>Sincronização automática — Instagram / Facebook</h3>
     <p class="panel-sub">Preenche os campos abaixo puxando direto da Meta, sem precisar digitar. Configure os IDs uma vez.</p>
-    <p class="panel-sub">Período sincronizado: <strong>${state.selectedMonth ? periodRangeLabel(state.selectedMonth.month_label, client.cycle_start_day) : "—"}</strong> (mesmo período do mês selecionado acima, dia ${client.cycle_start_day || 23} a dia ${client.cycle_start_day || 23})</p>
+    <p class="panel-sub">Período sincronizado: <strong>${state.selectedMonth ? periodRangeLabel(state.selectedMonth.month_label, client) : "—"}</strong> (mesmo período do mês selecionado acima)</p>
     ${closed ? `<p class="panel-sub frozen-note">🔒 ${lockedByReport ? "Relatório já gerado para este mês" : "Este ciclo já se encerrou"} — os números ficam congelados. A sincronização automática volta a ficar disponível no mês vigente.</p>` : ""}
     <div class="admin-field-grid" style="grid-template-columns:repeat(2,1fr)">
       <label class="field-label">ID da Página do Facebook<input type="text" id="fbPageIdInput" data-clientfield="fb_page_id" value="${fbId}" placeholder="ex: 1403992442789946"></label>
@@ -1130,7 +1187,7 @@ function metaSyncPanelHtml(client){
 function newClientFormHtml(){
   return `<div class="panel">
     <h3>Cadastrar novo cliente</h3>
-    <p class="panel-sub">Preenche os dados do cliente e já cria o login dele. Se ainda não souber o dia de início do ciclo, pode deixar em branco — o padrão é dia 23 (igual ao Mauro).</p>
+    <p class="panel-sub">Preenche os dados do cliente e já cria o login dele. A data de início define o período de referência: cada mês do cliente tem 30 dias, contados a partir dessa data (ex: início 01/11 → 1º mês de 01/11 a 30/11, 2º mês de 01/12 a 30/12).</p>
     <div class="admin-field-grid">
       <label class="field-label">Nome do cliente<input type="text" id="newClientName" placeholder="ex: JF Construção e Acabamento"></label>
       <label class="field-label">Área de atuação<input type="text" id="newClientArea" placeholder="ex: Serviços residenciais"></label>
@@ -1138,7 +1195,7 @@ function newClientFormHtml(){
       <label class="field-label">Instagram<input type="text" id="newClientInstagram" placeholder="https://instagram.com/..."></label>
       <label class="field-label">Facebook<input type="text" id="newClientFacebook" placeholder="https://facebook.com/..."></label>
       <label class="field-label">LinkedIn<input type="text" id="newClientLinkedin" placeholder="https://linkedin.com/..."></label>
-      <label class="field-label">Dia de início do ciclo (1 a 28)<input type="number" id="newClientCycleDay" min="1" max="28" placeholder="23 (padrão)"></label>
+      <label class="field-label">Data de início do cliente<input type="date" id="newClientStartDate"></label>
       <label class="field-label">Mensalidade (R$)<input type="number" id="newClientFee" step="0.01" placeholder="0,00"></label>
     </div>
     <h3 style="margin-top:20px">Logo do cliente</h3>
@@ -1149,6 +1206,14 @@ function newClientFormHtml(){
       <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="svcRedes" checked> Redes sociais</label>
       <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="svcMetaAds"> Gestão de Meta Ads</label>
       <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="svcGmn"> Google Meu Negócio</label>
+    </div>
+    <div id="newClientChannelsBox" style="margin-top:10px;padding-left:4px">
+      <p class="panel-sub" style="margin-bottom:6px">Quais canais de redes sociais esse cliente contratou?</p>
+      <div class="status-row">
+        <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="chInstagram" checked> Instagram</label>
+        <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="chFacebook" checked> Facebook</label>
+        <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="chLinkedin" checked> LinkedIn</label>
+      </div>
     </div>
     <h3 style="margin-top:20px">Acesso do cliente (login)</h3>
     <p class="panel-sub">Deixe e-mail e senha em branco se ainda não quiser criar o login agora — dá pra cadastrar o cliente primeiro e criar o acesso depois, direto no Supabase.</p>
@@ -1477,6 +1542,44 @@ function bindAdminHandlers(){
 // Cada handler só age se o elemento dele existir na tela atual, então é
 // seguro chamar essa função tanto do Hub quanto da área de trabalho.
 function bindAdminTailHandlers(){
+  // mostra/esconde a escolha de canais conforme "Redes sociais" estiver marcado
+  [["svcRedes","newClientChannelsBox"],["svcRedesEdit","editChannelsBox"]].forEach(([chk, box]) => {
+    const chkEl = document.getElementById(chk), boxEl = document.getElementById(box);
+    if (chkEl && boxEl){
+      const sync = () => { boxEl.style.display = chkEl.checked ? "" : "none"; };
+      chkEl.onchange = sync; sync();
+    }
+  });
+  const saveServicesBtn = document.getElementById("saveServicesBtn");
+  if (saveServicesBtn) saveServicesBtn.onclick = async () => {
+    const statusEl = document.getElementById("servicesStatus");
+    const services = [];
+    if (document.getElementById("svcRedesEdit").checked) services.push("redes_sociais");
+    if (document.getElementById("svcMetaAdsEdit").checked) services.push("meta_ads");
+    if (document.getElementById("svcGmnEdit").checked) services.push("gmn");
+    const social_channels = [];
+    if (services.includes("redes_sociais")){
+      if (document.getElementById("chInstagramEdit").checked) social_channels.push("instagram");
+      if (document.getElementById("chFacebookEdit").checked) social_channels.push("facebook");
+      if (document.getElementById("chLinkedinEdit").checked) social_channels.push("linkedin");
+      if (!social_channels.length){ alert("Marque pelo menos um canal, ou desmarque Redes sociais."); return; }
+    }
+    const cycle_start_date = document.getElementById("editStartDate").value || null;
+    const payload = { services, social_channels };
+    if (cycle_start_date){
+      payload.cycle_start_date = cycle_start_date;
+      payload.cycle_start_day = parseInt(cycle_start_date.slice(8,10), 10);
+    }
+    saveServicesBtn.disabled = true; saveServicesBtn.textContent = "Salvando…";
+    const { error } = await sb.from("clients").update(payload).eq("id", state.selectedClientId);
+    saveServicesBtn.disabled = false; saveServicesBtn.textContent = "Salvar serviços e período";
+    if (error){ if (statusEl) statusEl.textContent = "Erro ao salvar: " + error.message; return; }
+    const client = currentClientObj();
+    if (client) Object.assign(client, payload);
+    if (state.adminTab === "redes" && !services.includes("redes_sociais")) state.adminTab = "entregaveis";
+    if (services.includes("redes_sociais") && state.selectedMonth) await ensureSocialInsightRows(state.selectedMonth.id, state.selectedClientId);
+    renderAdmin();
+  };
   const createClientBtn = document.getElementById("createClientBtn");
   if (createClientBtn) createClientBtn.onclick = async () => {
     const statusEl = document.getElementById("newClientStatus");
@@ -1486,18 +1589,24 @@ function bindAdminTailHandlers(){
     const instagram_url = document.getElementById("newClientInstagram").value.trim() || null;
     const facebook_url = document.getElementById("newClientFacebook").value.trim() || null;
     const linkedin_url = document.getElementById("newClientLinkedin").value.trim() || null;
-    const cycleDayRaw = document.getElementById("newClientCycleDay").value.trim();
-    const cycle_start_day = cycleDayRaw ? parseInt(cycleDayRaw, 10) : 23;
+    const cycle_start_date = document.getElementById("newClientStartDate").value || null;
+    const cycle_start_day = cycle_start_date ? parseInt(cycle_start_date.slice(8,10), 10) : 23;
     const monthly_fee = parseFloat(document.getElementById("newClientFee").value) || 0;
     const services = [];
     if (document.getElementById("svcRedes").checked) services.push("redes_sociais");
     if (document.getElementById("svcMetaAds").checked) services.push("meta_ads");
     if (document.getElementById("svcGmn").checked) services.push("gmn");
+    const social_channels = [];
+    if (services.includes("redes_sociais")){
+      if (document.getElementById("chInstagram").checked) social_channels.push("instagram");
+      if (document.getElementById("chFacebook").checked) social_channels.push("facebook");
+      if (document.getElementById("chLinkedin").checked) social_channels.push("linkedin");
+    }
     const email = document.getElementById("newClientEmail").value.trim();
     const password = document.getElementById("newClientPassword").value;
 
     if (!name){ alert("Preenche o nome do cliente."); return; }
-    if (cycle_start_day < 1 || cycle_start_day > 28){ alert("O dia de início do ciclo precisa ser entre 1 e 28."); return; }
+    if (services.includes("redes_sociais") && social_channels.length === 0){ alert("Marque pelo menos um canal de redes sociais (Instagram, Facebook ou LinkedIn), ou desmarque Redes sociais."); return; }
     if (email && password && password.length < 6){ alert("A senha precisa ter pelo menos 6 caracteres."); return; }
     if (email && !password){ alert("Preenche a senha pra criar o login, ou deixa os dois (e-mail e senha) em branco."); return; }
 
@@ -1508,7 +1617,7 @@ function bindAdminTailHandlers(){
     try {
       const { data: newClient, error: clientErr } = await sb.from("clients").insert({
         name, area_atuacao, site_url, instagram_url, facebook_url, linkedin_url,
-        cycle_start_day, monthly_fee, services
+        cycle_start_day, cycle_start_date, monthly_fee, services, social_channels
       }).select().single();
       if (clientErr) throw clientErr;
 
@@ -1552,7 +1661,14 @@ function bindAdminTailHandlers(){
   };
   const addMonthBtn = document.getElementById("addMonthBtn");
   if (addMonthBtn) addMonthBtn.onclick = async () => {
-    let label = prompt("Mês (formato AAAA-MM, ex: 2026-11):");
+    const sorted = state.months.map(x => x.month_label).sort();
+    const cl = currentClientObj();
+    let suggestion = cl && cl.cycle_start_date ? String(cl.cycle_start_date).slice(0,7) : "2026-11";
+    if (sorted.length){
+      const [ly, lm] = sorted[sorted.length-1].split("-").map(Number);
+      suggestion = lm === 12 ? `${ly+1}-01` : `${ly}-${String(lm+1).padStart(2,"0")}`;
+    }
+    let label = prompt("Mês (formato AAAA-MM, ex: 2026-11):", suggestion);
     if (!label) return;
     label = label.trim();
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(label)){
@@ -1845,7 +1961,7 @@ async function generateReportPdf(client, month, report){
     facebook: [["views","Visualizações"],["interactions","Engajamento"],["reactions","Reações"],["shares","Compartilhamentos"]],
     linkedin: [["impressions","Impressões"],["new_followers","Novos seguidores"],["profile_visits","Visitas ao perfil"],["search_appearances","Aparições em pesquisas"]],
   };
-  SOCIAL_PLATFORMS.forEach(([key,label]) => {
+  platformsFor(client).forEach(([key,label]) => {
     const cur = state.socialInsights[key];
     const prev = state.prevSocialInsights ? state.prevSocialInsights[key] : null;
     if (!cur) return;

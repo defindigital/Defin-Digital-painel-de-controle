@@ -1,6 +1,6 @@
 // ============================================================
 // Defin Digital - Painel de Controle
-// Edge Function: sync-meta-insights  (v3 — período travado 23→23)
+// Edge Function: sync-meta-insights  (v4 — ciclos de 30 dias + canais por cliente)
 //
 // Diferença desta versão: em vez de usar o mês "de hoje" (calculado
 // pelo relógio do servidor), a função agora recebe o ID do mês que
@@ -40,9 +40,20 @@ function json(body: unknown, status = 200) {
   });
 }
 
-// Período de referência: do dia 23 do mês anterior até o dia 23 deste mês.
-function periodForMonth(label: string) {
+// Período de referência do ciclo:
+//  - Cliente com data de início (cycle_start_date): ciclos de 30 dias. O mês da
+//    data de início é o ciclo 1 (início 01/11: "2026-11" = 01/11 a 30/11,
+//    "2026-12" = 01/12 a 30/12, ...).
+//  - Cliente antigo, sem data: do dia 23 do mês anterior até o dia 23 do mês.
+function periodForMonth(label: string, cycleStartDate?: string | null) {
   const [y, m] = label.split("-").map(Number);
+  if (cycleStartDate) {
+    const [sy, sm, sd] = String(cycleStartDate).slice(0, 10).split("-").map(Number);
+    const n = (y * 12 + m) - (sy * 12 + sm);
+    const start = new Date(Date.UTC(sy, sm - 1, sd + 30 * n, 0, 0, 0));
+    const end = new Date(Date.UTC(sy, sm - 1, sd + 30 * n + 29, 23, 59, 59));
+    return { start, end };
+  }
   let py = y, pm = m - 1;
   if (pm === 0) { pm = 12; py = y - 1; }
   const start = new Date(Date.UTC(py, pm - 1, 23, 0, 0, 0));
@@ -233,7 +244,7 @@ Deno.serve(async (req: Request) => {
     if (monthErr || !month) return json({ error: "Mês não encontrado para este cliente." }, 404);
 
     const monthLabel = month.month_label as string;
-    const { start, end } = periodForMonth(monthLabel);
+    const { start, end } = periodForMonth(monthLabel, (client.cycle_start_date as string | null) ?? null);
     const now = new Date();
     const since = Math.floor(start.getTime() / 1000);
     const until = Math.min(Math.floor(end.getTime() / 1000), Math.floor(now.getTime() / 1000));
@@ -263,7 +274,11 @@ Deno.serve(async (req: Request) => {
       errors: [],
     };
 
-    if (client.ig_business_id) {
+    const channels: string[] | null = Array.isArray(client.social_channels) ? client.social_channels as string[] : null;
+    const wantsIg = !channels || channels.includes("instagram");
+    const wantsFb = !channels || channels.includes("facebook");
+
+    if (client.ig_business_id && wantsIg) {
       try {
         const igData = await syncInstagram(client.ig_business_id as string, since, until);
         const dbErr = await upsertInsight(supabase, client_id, month.id as string, "instagram", igData);
@@ -278,7 +293,7 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    if (client.fb_page_id) {
+    if (client.fb_page_id && wantsFb) {
       try {
         const fbData = await syncFacebook(client.fb_page_id as string, since, until);
         const dbErr = await upsertInsight(supabase, client_id, month.id as string, "facebook", fbData);
@@ -293,8 +308,8 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    if (!client.ig_business_id && !client.fb_page_id) {
-      result.errors.push("Nenhum ID de Instagram/Facebook configurado para este cliente.");
+    if (!(client.ig_business_id && wantsIg) && !(client.fb_page_id && wantsFb)) {
+      result.errors.push("Nenhum canal Instagram/Facebook ativo e configurado para este cliente.");
     }
 
     console.log("Resultado final enviado ao painel:", JSON.stringify(result));
