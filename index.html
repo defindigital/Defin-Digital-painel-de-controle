@@ -1139,6 +1139,7 @@ function renderAdmin(){
   let tabContent = "";
   if (m && state.adminTab === "entregaveis"){
     tabContent = `<div class="panel"><h3>Entregáveis — ${m.month_label} <span style="font-weight:400;font-size:13px;color:var(--ink-soft,#64748b)">(${periodRangeLabel(m.month_label, currentClient)})</span></h3>
+      ${deliverablesSyncHtml(currentClient, m)}
       <div class="admin-field-grid">
         ${numField("posts_done","Posts feitos",m.posts_done)}${numField("posts_target","Posts agendados",m.posts_target)}
         ${numField("stories_done","Stories feitos",m.stories_done)}${numField("stories_target","Stories agendados",m.stories_target)}
@@ -1445,6 +1446,24 @@ function gmnFormHtml(isAdmin){
   </div>`;
 }
 
+// Sincronização dos "feitos" (posts, reels, stories) com o Instagram/Facebook,
+// sempre dentro do ciclo do cliente. Os números continuam editáveis na mão.
+function deliverablesSyncHtml(client, m){
+  if (!client || !(client.ig_business_id || client.fb_page_id)) return "";
+  const locked = isSyncLocked(m, client);
+  const last = m.deliverables_synced_at ? new Date(m.deliverables_synced_at).toLocaleString("pt-BR") : null;
+  const manual = Object.keys(m.deliverables_manual || {}).filter(k => (m.deliverables_manual||{})[k]);
+  const names = { posts_done:"posts", reels_done:"reels", stories_done:"stories" };
+  return `<div class="sync-box" style="border:1px solid var(--border);border-radius:10px;padding:12px;margin:10px 0 14px">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <button class="save sync-btn" id="syncDeliverablesBtn" ${locked?"disabled":""}>🔄 Sincronizar posts, reels e stories</button>
+      <button class="confirm-cancel-btn" id="syncDeliverablesForceBtn" ${locked?"disabled":""} title="Recalcula tudo e descarta os números que você editou na mão">Recalcular tudo</button>
+    </div>
+    <p class="panel-sub" id="syncDeliverablesStatus" style="margin-top:8px">${locked ? "Ciclo encerrado ou relatório gerado — números travados." : (last ? "Última sincronização: " + last + "." : "Ainda não sincronizado.")}
+      Conta só o ciclo ${periodRangeLabel(m.month_label, client)}. Você pode editar qualquer número abaixo; o que você editar não é sobrescrito${manual.length ? " (editado na mão: " + manual.map(k => names[k] || k).join(", ") + ")" : ""}. Stories só são contados a partir do dia em que a sincronização começou a rodar.</p>
+  </div>`;
+}
+
 function numField(field,label,value){
   return `<label class="field-label">${label}<input type="number" data-field="${field}" value="${value||0}"></label>`;
 }
@@ -1459,7 +1478,13 @@ function bindAdminHandlers(){
       const field = el.dataset.field;
       const value = el.type === "checkbox" ? el.checked : (el.type === "number" ? Number(el.value) : el.value);
       state.selectedMonth[field] = value;
-      await sb.from("deliverable_months").update({ [field]: value }).eq("id", state.selectedMonth.id);
+      const upd = { [field]: value };
+      if (["posts_done","reels_done","stories_done"].includes(field)){
+        // número editado na mão: a sincronização automática não sobrescreve
+        state.selectedMonth.deliverables_manual = { ...(state.selectedMonth.deliverables_manual || {}), [field]: true };
+        upd.deliverables_manual = state.selectedMonth.deliverables_manual;
+      }
+      await sb.from("deliverable_months").update(upd).eq("id", state.selectedMonth.id);
     };
   });
   document.querySelectorAll("[data-social]").forEach(el => {
@@ -1521,6 +1546,40 @@ function bindAdminHandlers(){
       }
     };
   }
+  ["syncDeliverablesBtn","syncDeliverablesForceBtn"].forEach(id => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    btn.onclick = async () => {
+      const force = id === "syncDeliverablesForceBtn";
+      if (force && !confirm("Recalcular tudo vai descartar os números de posts, reels e stories que você editou na mão neste mês. Continuar?")) return;
+      const statusEl = document.getElementById("syncDeliverablesStatus");
+      const label = btn.textContent;
+      btn.disabled = true; btn.textContent = "Sincronizando…";
+      if (statusEl) statusEl.textContent = "Buscando publicações na Meta…";
+      try {
+        const { data: sessionData } = await sb.auth.getSession();
+        const { data, error } = await sb.functions.invoke("sync-deliverables", {
+          body: { client_id: state.selectedClientId, deliverable_month_id: state.selectedMonth.id, force },
+          headers: { Authorization: `Bearer ${sessionData.session.access_token}` }
+        });
+        if (error) throw error;
+        if (data && data.error) throw new Error(data.error);
+        const { data: fresh } = await sb.from("deliverable_months").select("*").eq("id", state.selectedMonth.id).maybeSingle();
+        if (fresh){
+          Object.assign(state.selectedMonth, fresh);
+          const idx = state.months.findIndex(x => x.id === fresh.id);
+          if (idx >= 0) state.months[idx] = state.selectedMonth;
+        }
+        state.deliverablesSyncMsg = (data && data.warnings && data.warnings.length) ? "Sincronizado com avisos: " + data.warnings.join(" · ") : null;
+        renderAdmin();
+        const s2 = document.getElementById("syncDeliverablesStatus");
+        if (s2 && state.deliverablesSyncMsg) s2.textContent = state.deliverablesSyncMsg;
+      } catch (e) {
+        if (statusEl) statusEl.textContent = "Erro ao sincronizar: " + (e.message || e);
+        btn.disabled = false; btn.textContent = label;
+      }
+    };
+  });
   const saveMetaAdsBtn = document.getElementById("saveMetaAdsBtn");
   if (saveMetaAdsBtn) saveMetaAdsBtn.onclick = async () => {
     const payload = { client_id: state.selectedClientId, deliverable_month_id: state.selectedMonth.id };
