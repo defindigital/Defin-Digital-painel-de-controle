@@ -1310,6 +1310,7 @@ function metaSyncPanelHtml(client){
     <div class="admin-field-grid" style="grid-template-columns:repeat(2,1fr)">
       <label class="field-label">ID da Página do Facebook<input type="text" id="fbPageIdInput" data-clientfield="fb_page_id" value="${fbId}" placeholder="ex: 1403992442789946"></label>
       <label class="field-label">ID da conta comercial do Instagram<input type="text" id="igBizIdInput" data-clientfield="ig_business_id" value="${igId}" placeholder="ex: 17841407177582733"></label>
+      <label class="field-label">ID da conta de anúncios (Meta Ads)<input type="text" id="adAccountIdInput" value="${client.ad_account_id||""}" placeholder="ex: 1459282312962423"></label>
     </div>
     <button class="save" id="saveMetaIdsBtn">Salvar IDs</button>
     <button class="save sync-btn" id="syncMetaBtn" ${syncDisabled?"disabled":""} title="${closed?"Ciclo encerrado — sincronização bloqueada":""}">🔄 Sincronizar agora</button>
@@ -1396,7 +1397,9 @@ function metaAdsFormHtml(isAdmin){
   const d = state.metaAdsData || {};
   if (isAdmin){
     return `<div class="panel"><h3>Meta Ads — ${state.selectedMonth.month_label}</h3>
-      <p class="panel-sub">Preencha manualmente com os dados do Gerenciador de Anúncios para este período. A integração automática fica para uma próxima etapa.</p>
+      <p class="panel-sub">Os números vêm direto do Gerenciador de Anúncios (Meta) para o período do ciclo e atualizam sozinhos. Você ainda pode ajustar manualmente.</p>
+      <button class="save sync-btn" id="syncAdsBtn" ${currentClientObj() && currentClientObj().ad_account_id ? "" : "disabled"}>🔄 Sincronizar Meta Ads agora</button>
+      <p class="panel-sub" id="adsSyncStatus" style="margin-top:8px">${currentClientObj() && currentClientObj().ad_account_id ? (d.last_synced_at ? "Última sincronização: " + new Date(d.last_synced_at).toLocaleString("pt-BR") : "Ainda não sincronizado.") : "Informe o ID da conta de anúncios no painel de sincronização (aba Redes sociais)."}</p>
       <div class="admin-field-grid">
         <label class="field-label">Investimento (R$)<input type="number" step="0.01" data-metaads="investimento" value="${d.investimento||0}"></label>
         <label class="field-label">Alcance<input type="number" data-metaads="alcance" value="${d.alcance||0}"></label>
@@ -1509,10 +1512,14 @@ function bindAdminHandlers(){
       const clientId = state.selectedClientId;
       const fb_page_id = document.getElementById("fbPageIdInput").value.trim() || null;
       const ig_business_id = document.getElementById("igBizIdInput").value.trim() || null;
-      const { error } = await sb.from("clients").update({ fb_page_id, ig_business_id }).eq("id", clientId);
+      const adEl = document.getElementById("adAccountIdInput");
+      const ad_account_id = adEl ? (adEl.value.trim().replace(/^act_/,"") || null) : undefined;
+      const upd = { fb_page_id, ig_business_id };
+      if (ad_account_id !== undefined) upd.ad_account_id = ad_account_id;
+      const { error } = await sb.from("clients").update(upd).eq("id", clientId);
       if (error){ alert("Erro ao salvar: " + error.message); return; }
       const client = state.clients.find(c => c.id === clientId);
-      if (client){ client.fb_page_id = fb_page_id; client.ig_business_id = ig_business_id; }
+      if (client){ client.fb_page_id = fb_page_id; client.ig_business_id = ig_business_id; if (ad_account_id !== undefined) client.ad_account_id = ad_account_id; }
       renderAdmin();
     };
   }
@@ -1580,6 +1587,17 @@ function bindAdminHandlers(){
       }
     };
   });
+  const syncAdsBtn = document.getElementById("syncAdsBtn");
+  if (syncAdsBtn) syncAdsBtn.onclick = async () => {
+    const st = document.getElementById("adsSyncStatus");
+    syncAdsBtn.disabled = true; st.textContent = "Sincronizando…";
+    const { data, error } = await sb.functions.invoke("sync-meta-ads", { body: { client_id: state.selectedClientId, deliverable_month_id: state.selectedMonth.id } });
+    let msg = error ? error.message : (data && data.error);
+    if (error && error.context && error.context.json) { try { const j = await error.context.json(); if (j.error) msg = j.error; } catch(e){} }
+    if (msg){ st.textContent = "Erro: " + msg; syncAdsBtn.disabled = false; return; }
+    await loadMetaAdsData(state.selectedMonth.id);
+    renderAdmin();
+  };
   const saveMetaAdsBtn = document.getElementById("saveMetaAdsBtn");
   if (saveMetaAdsBtn) saveMetaAdsBtn.onclick = async () => {
     const payload = { client_id: state.selectedClientId, deliverable_month_id: state.selectedMonth.id };
