@@ -82,6 +82,14 @@ button,input,select,textarea{font-family:inherit}
 .panel button.save:hover{box-shadow:0 6px 18px rgba(20,184,199,.4);transform:translateY(-1px)}
 .panel button.save:active{transform:scale(.98)}
 .admin-summary-text{white-space:pre-wrap;line-height:1.6}
+.ads-badge{font-size:11px;font-weight:600;padding:3px 8px;border-radius:999px;margin-left:8px;vertical-align:middle;background:var(--border);color:var(--ink-soft)}
+.ads-badge.ads-locked{background:#e9eef6;color:#35506f}.ads-badge.ads-live{background:#e3f4e8;color:#1f6b3a}
+.ads-period.locked{border-left:3px solid #8ea4c0}.ads-period.live{border-left:3px solid #39a35e}
+.ads-period-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.ads-cmp{width:100%;border-collapse:collapse;margin-top:12px;font-size:14px}
+.ads-cmp th,.ads-cmp td{padding:8px 10px;border-bottom:1px solid var(--border);text-align:right}
+.ads-cmp th:first-child,.ads-cmp td:first-child{text-align:left}
+.ads-cmp td.ads-good{color:#1f6b3a;font-weight:600}.ads-cmp td.ads-bad{color:#b3392f;font-weight:600}
 .metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:16px}
 .metric-card{background:var(--surface);border:1px solid var(--border);border-top:3px solid var(--border);border-radius:var(--radius-sm);padding:16px;box-shadow:var(--shadow-sm);transition:box-shadow .15s,transform .15s}
 .metric-card:hover{box-shadow:var(--shadow-md);transform:translateY(-1px)}
@@ -374,7 +382,7 @@ const REPORT_SECTIONS = [
 ];
 const app = document.getElementById("app");
 
-let state = { session:null, profile:null, clients:[], selectedClientId:null, months:[], selectedMonth:null, checklist:[], calendarPosts:[], socialInsights:{}, prevSocialInsights:{}, prevMonth:null, monthlyReport:null, proposal:null, billing:null, metaAdsData:null, gmnData:null, tab:"resumo", adminTab:"entregaveis", adminView:"hub", hubTab:"lista", recoveryMode:false, forceChangePassword:false, welcomeShown:false };
+let state = { session:null, profile:null, clients:[], selectedClientId:null, months:[], selectedMonth:null, checklist:[], calendarPosts:[], socialInsights:{}, prevSocialInsights:{}, prevMonth:null, monthlyReport:null, proposal:null, billing:null, metaAdsData:null, metaAdsPeriods:[], cmpA:null, cmpB:null, gmnData:null, tab:"resumo", adminTab:"entregaveis", adminView:"hub", hubTab:"lista", recoveryMode:false, forceChangePassword:false, welcomeShown:false };
 
 async function init(){
   // Detecta se o usuário chegou aqui por um link de recuperação de senha
@@ -413,6 +421,7 @@ async function loadMonthsFor(clientId, isAdmin){
   state.months = data || [];
   state.selectedMonth = state.months.length ? state.months[state.months.length-1] : null;
   await loadProposal(clientId);
+  await loadMetaAdsPeriods(clientId);
   if (isAdmin) await loadBilling(clientId);
   if (state.selectedMonth) {
     await loadCalendar(state.selectedMonth.id);
@@ -478,6 +487,10 @@ async function loadMonthlyReport(monthId){
   state.monthlyReport = data || null;
 }
 
+async function loadMetaAdsPeriods(clientId){
+  const { data } = await sb.from("meta_ads_periods").select("*").eq("client_id", clientId).order("start_date", { ascending:true });
+  state.metaAdsPeriods = data || [];
+}
 async function loadMetaAdsData(monthId){
   const { data } = await sb.from("meta_ads_data").select("*").eq("deliverable_month_id", monthId).maybeSingle();
   state.metaAdsData = data || null;
@@ -1393,10 +1406,148 @@ function socialCardHtml(platformKey, label, data, editable){
   </div>`;
 }
 
+// ---------- Meta Ads: períodos (semanais) + comparativo ----------
+function adsFmtDate(iso){ const [y,m,d] = String(iso).slice(0,10).split("-"); return `${d}/${m}`; }
+function adsMoney(v){ return "R$ " + (Number(v)||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function adsNum(v){ return (Number(v)||0).toLocaleString("pt-BR"); }
+function adsDerived(p){
+  const inv = Number(p.investimento)||0, leads = Number(p.leads)||0, cl = Number(p.cliques)||0;
+  return { cpl: leads ? inv/leads : null, cpc: cl ? inv/cl : null };
+}
+function adsPeriodTitle(p){ return `${p.label || "Período"} · ${adsFmtDate(p.start_date)} a ${adsFmtDate(p.end_date)}`; }
+function adsPeriodStatus(p){
+  if (p.locked) return { txt:"🔒 Fechado", cls:"locked" };
+  const today = new Date().toISOString().slice(0,10);
+  if (today < String(p.start_date).slice(0,10)) return { txt:"⏳ Ainda não começou", cls:"wait" };
+  if (today > String(p.end_date).slice(0,10)) return { txt:"● Encerrado (aguardando fechamento)", cls:"live" };
+  return { txt:"● Em andamento", cls:"live" };
+}
+function metaAdsPeriodsHtml(isAdmin){
+  const periods = state.metaAdsPeriods || [];
+  if (!periods.length && !isAdmin) return "";
+  const cards = periods.map(p => {
+    const st = adsPeriodStatus(p), dv = adsDerived(p);
+    const sync = p.last_synced_at ? `Atualizado em ${new Date(p.last_synced_at).toLocaleString("pt-BR")}` : "Ainda não sincronizado";
+    const adm = isAdmin ? `<div class="ads-period-actions">
+        <button class="save sync-btn" data-adsperiod="sync" data-id="${p.id}" ${p.locked?"disabled":""}>🔄 Sincronizar</button>
+        <button class="save" data-adsperiod="${p.locked?"unlock":"lock"}" data-id="${p.id}">${p.locked?"Destravar":"🔒 Fechar e travar"}</button>
+        <button class="save" data-adsperiod="delete" data-id="${p.id}">Excluir</button>
+      </div>` : "";
+    return `<div class="panel ads-period ${st.cls}" style="margin-bottom:14px">
+      <h3 style="margin-bottom:4px">${adsPeriodTitle(p)} <span class="ads-badge ads-${st.cls}">${st.txt}</span></h3>
+      <p class="panel-sub">${sync}${p.locked ? " · números congelados" : ""}</p>
+      <div class="metric-grid">
+        <div class="metric-card"><div class="metric-label">Investimento</div><div class="metric-value">${adsMoney(p.investimento)}</div></div>
+        <div class="metric-card"><div class="metric-label">Alcance</div><div class="metric-value">${adsNum(p.alcance)}</div></div>
+        <div class="metric-card"><div class="metric-label">Cliques</div><div class="metric-value">${adsNum(p.cliques)}</div></div>
+        <div class="metric-card"><div class="metric-label">Leads</div><div class="metric-value">${adsNum(p.leads)}</div></div>
+      </div>
+      <p class="panel-sub" style="margin:0">Custo por lead: <strong>${dv.cpl==null?"—":adsMoney(dv.cpl)}</strong> · Custo por clique: <strong>${dv.cpc==null?"—":adsMoney(dv.cpc)}</strong></p>
+      ${adm}
+      <p class="panel-sub" id="adsPeriodMsg-${p.id}" style="margin:8px 0 0"></p>
+    </div>`;
+  }).join("");
+
+  // comparativo
+  let cmp = "";
+  if (periods.length >= 2){
+    const ids = periods.map(p => p.id);
+    const bId = ids.includes(state.cmpB) ? state.cmpB : ids[ids.length-1];
+    const aId = ids.includes(state.cmpA) && state.cmpA !== bId ? state.cmpA : (ids[ids.indexOf(bId)-1] || ids[0]);
+    const A = periods.find(p=>p.id===aId), B = periods.find(p=>p.id===bId);
+    const opts = sel => periods.map(p=>`<option value="${p.id}" ${p.id===sel?"selected":""}>${adsPeriodTitle(p)}</option>`).join("");
+    const dA = adsDerived(A), dB = adsDerived(B);
+    const row = (label, a, b, fmt, lowerIsBetter, neutral) => {
+      let delta = "—", cls = "";
+      if (a != null && b != null){
+        const diff = b - a;
+        const pct = a ? (diff / a) * 100 : null;
+        const up = diff > 0, flat = diff === 0;
+        delta = (flat ? "= " : (up ? "▲ " : "▼ ")) + (pct==null ? fmt(Math.abs(diff)) : Math.abs(pct).toLocaleString("pt-BR",{maximumFractionDigits:1}) + "%");
+        if (!flat && !neutral) cls = ((up && !lowerIsBetter) || (!up && lowerIsBetter)) ? "ads-good" : "ads-bad";
+      }
+      return `<tr><td>${label}</td><td>${a==null?"—":fmt(a)}</td><td>${b==null?"—":fmt(b)}</td><td class="${cls}">${delta}</td></tr>`;
+    };
+    const partial = (!A.locked || !B.locked) ? `<p class="panel-sub">Períodos ainda em andamento têm menos dias de dados; o comparativo fica completo quando ambos forem fechados.</p>` : "";
+    cmp = `<div class="panel" style="margin-bottom:14px">
+      <h3>Comparativo entre períodos</h3>
+      <div class="admin-field-grid" style="grid-template-columns:repeat(2,1fr)">
+        <label class="field-label">Período anterior<select id="adsCmpA">${opts(aId)}</select></label>
+        <label class="field-label">Período atual<select id="adsCmpB">${opts(bId)}</select></label>
+      </div>
+      <table class="ads-cmp"><thead><tr><th>Métrica</th><th>${A.label||adsFmtDate(A.start_date)}</th><th>${B.label||adsFmtDate(B.start_date)}</th><th>Variação</th></tr></thead><tbody>
+        ${row("Investimento", Number(A.investimento)||0, Number(B.investimento)||0, adsMoney, false, true)}
+        ${row("Alcance", Number(A.alcance)||0, Number(B.alcance)||0, adsNum)}
+        ${row("Cliques", Number(A.cliques)||0, Number(B.cliques)||0, adsNum)}
+        ${row("Leads", Number(A.leads)||0, Number(B.leads)||0, adsNum)}
+        ${row("Custo por lead", dA.cpl, dB.cpl, adsMoney, true)}
+        ${row("Custo por clique", dA.cpc, dB.cpc, adsMoney, true)}
+      </tbody></table>${partial}
+    </div>`;
+  }
+
+  const last = periods[periods.length-1];
+  let nextStart = "", nextEnd = "";
+  if (last){ const d = new Date(String(last.end_date).slice(0,10)+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+2); nextStart = d.toISOString().slice(0,10); d.setUTCDate(d.getUTCDate()+5); nextEnd = d.toISOString().slice(0,10); }
+  const addForm = isAdmin ? `<div class="panel" style="margin-bottom:14px">
+      <h3>Novo período</h3>
+      <p class="panel-sub">Crie o próximo ciclo da campanha (ex.: semanal). Ao fechar e travar um período, os números dele ficam congelados.</p>
+      <div class="admin-field-grid" style="grid-template-columns:repeat(3,1fr)">
+        <label class="field-label">Nome<input type="text" id="adsNewLabel" placeholder="Semana ${periods.length+1}" value="Semana ${periods.length+1}"></label>
+        <label class="field-label">Início<input type="date" id="adsNewStart" value="${nextStart}"></label>
+        <label class="field-label">Fim<input type="date" id="adsNewEnd" value="${nextEnd}"></label>
+      </div>
+      <button class="save" data-adsperiod="add">+ Adicionar período</button>
+      <p class="panel-sub" id="adsNewMsg" style="margin:8px 0 0"></p>
+    </div>` : "";
+  return `<h3 style="margin:8px 0 12px">Resultados por período</h3>${cards}${cmp}${addForm}`;
+}
+
+async function handleAdsPeriodAction(btn){
+  const action = btn.dataset.adsperiod, id = btn.dataset.id;
+  const clientId = state.selectedClientId;
+  const msg = id ? document.getElementById("adsPeriodMsg-"+id) : document.getElementById("adsNewMsg");
+  const say = t => { if (msg) msg.textContent = t; };
+  try {
+    if (action === "sync"){
+      btn.disabled = true; say("Sincronizando…");
+      const { data, error } = await sb.functions.invoke("sync-meta-ads", { body: { client_id: clientId, period_id: id } });
+      let m = error ? error.message : (data && data.error);
+      if (error && error.context && error.context.json){ try { const j = await error.context.json(); if (j.error) m = j.error; } catch(e){} }
+      if (m){ say("Erro: " + m); btn.disabled = false; return; }
+    } else if (action === "lock" || action === "unlock"){
+      if (action === "lock" && !confirm("Fechar e travar este período? Os números ficam congelados.")) return;
+      const { error } = await sb.from("meta_ads_periods").update({ locked: action === "lock" }).eq("id", id);
+      if (error){ say("Erro: " + error.message); return; }
+    } else if (action === "delete"){
+      if (!confirm("Excluir este período? Não dá para desfazer.")) return;
+      const { error } = await sb.from("meta_ads_periods").delete().eq("id", id);
+      if (error){ say("Erro: " + error.message); return; }
+    } else if (action === "add"){
+      const label = document.getElementById("adsNewLabel").value.trim() || null;
+      const start_date = document.getElementById("adsNewStart").value;
+      const end_date = document.getElementById("adsNewEnd").value;
+      if (!start_date || !end_date || end_date < start_date){ say("Informe início e fim válidos."); return; }
+      const { error } = await sb.from("meta_ads_periods").insert({ client_id: clientId, label, start_date, end_date });
+      if (error){ say("Erro: " + error.message); return; }
+    }
+    await loadMetaAdsPeriods(clientId);
+    render();
+  } catch (e) { say("Erro: " + e.message); }
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest && e.target.closest("[data-adsperiod]");
+  if (b && !b.disabled) handleAdsPeriodAction(b);
+});
+document.addEventListener("change", e => {
+  if (e.target.id === "adsCmpA"){ state.cmpA = e.target.value; render(); }
+  if (e.target.id === "adsCmpB"){ state.cmpB = e.target.value; render(); }
+});
+
 function metaAdsFormHtml(isAdmin){
   const d = state.metaAdsData || {};
   if (isAdmin){
-    return `<div class="panel"><h3>Meta Ads — ${state.selectedMonth.month_label}</h3>
+    return metaAdsPeriodsHtml(true) + `<div class="panel"><h3>Meta Ads — ciclo mensal ${state.selectedMonth.month_label}</h3>
       <p class="panel-sub">Os números vêm direto do Gerenciador de Anúncios (Meta) para o período do ciclo e atualizam sozinhos. Você ainda pode ajustar manualmente.</p>
       <button class="save sync-btn" id="syncAdsBtn" ${currentClientObj() && currentClientObj().ad_account_id ? "" : "disabled"}>🔄 Sincronizar Meta Ads agora</button>
       <p class="panel-sub" id="adsSyncStatus" style="margin-top:8px">${currentClientObj() && currentClientObj().ad_account_id ? (d.last_synced_at ? "Última sincronização: " + new Date(d.last_synced_at).toLocaleString("pt-BR") : "Ainda não sincronizado.") : "Informe o ID da conta de anúncios no painel de sincronização (aba Redes sociais)."}</p>
@@ -1410,8 +1561,8 @@ function metaAdsFormHtml(isAdmin){
       <button class="save" id="saveMetaAdsBtn">Salvar</button>
     </div>`;
   }
-  if (!state.metaAdsData) return `<div class="panel"><h3>Meta Ads</h3><p class="panel-sub">Sem dados cadastrados para este período.</p></div>`;
-  return `<div class="panel"><h3>Meta Ads — ${state.selectedMonth.month_label}</h3>
+  if (!state.metaAdsData) return metaAdsPeriodsHtml(false) + `<div class="panel"><h3>Meta Ads</h3><p class="panel-sub">Sem dados cadastrados para este período.</p></div>`;
+  return metaAdsPeriodsHtml(false) + `<div class="panel"><h3>Meta Ads — ciclo mensal ${state.selectedMonth.month_label}</h3>
     <div class="metric-grid">
       <div class="metric-card"><div class="metric-label">Investimento</div><div class="metric-value">R$ ${(d.investimento||0).toLocaleString("pt-BR",{minimumFractionDigits:2})}</div></div>
       <div class="metric-card"><div class="metric-label">Alcance</div><div class="metric-value">${d.alcance||0}</div></div>

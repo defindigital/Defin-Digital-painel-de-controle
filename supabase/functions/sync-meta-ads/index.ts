@@ -95,6 +95,19 @@ async function syncOne(supabase: ReturnType<typeof createClient>, client: Record
   return vals;
 }
 
+async function syncPeriod(supabase: ReturnType<typeof createClient>, client: Record<string, unknown>, period: Record<string, unknown>) {
+  if (period.locked) throw new Error(`O período ${period.label || period.start_date} está travado.`);
+  const start = new Date(`${period.start_date}T00:00:00Z`);
+  const end = new Date(`${period.end_date}T23:59:59Z`);
+  if (new Date() < start) throw new Error("Este período ainda não começou.");
+  const vals = await fetchAds(client.ad_account_id as string, start, end);
+  const { error } = await supabase.from("meta_ads_periods")
+    .update({ ...vals, last_synced_at: new Date().toISOString(), synced_auto: true })
+    .eq("id", period.id as string);
+  if (error) throw new Error(error.message);
+  return vals;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
   try {
@@ -107,6 +120,13 @@ Deno.serve(async (req: Request) => {
       const { data: clients } = await supabase.from("clients").select("*").not("ad_account_id", "is", null);
       const summary: unknown[] = [];
       for (const c of clients || []) {
+        // períodos semanais (não travados e já iniciados)
+        const { data: periods } = await supabase.from("meta_ads_periods").select("*").eq("client_id", c.id).eq("locked", false);
+        for (const p of periods || []) {
+          if (new Date() < new Date(`${p.start_date}T00:00:00Z`)) continue;
+          try { summary.push({ client: c.name, period: p.label, ...(await syncPeriod(supabase, c, p)) }); }
+          catch (e) { summary.push({ client: c.name, period: p.label, error: (e as Error).message }); }
+        }
         if (!(c.services || []).includes("meta_ads")) continue;
         const { data: months } = await supabase.from("deliverable_months").select("id, month_label, report_locked").eq("client_id", c.id);
         const now = new Date();
@@ -121,8 +141,8 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, summary });
     }
 
-    const { client_id, deliverable_month_id } = body;
-    if (!client_id || !deliverable_month_id) return json({ error: "client_id e deliverable_month_id são obrigatórios." }, 400);
+    const { client_id, deliverable_month_id, period_id } = body;
+    if (!client_id || (!deliverable_month_id && !period_id)) return json({ error: "client_id e deliverable_month_id são obrigatórios." }, 400);
     const userClient = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: req.headers.get("Authorization") || "" } } });
     const { data: userRes } = await userClient.auth.getUser();
     if (!userRes?.user) return json({ error: "Não autenticado." }, 401);
@@ -132,6 +152,11 @@ Deno.serve(async (req: Request) => {
     const { data: client } = await supabase.from("clients").select("*").eq("id", client_id).maybeSingle();
     if (!client) return json({ error: "Cliente não encontrado." }, 404);
     if (!client.ad_account_id) return json({ error: "Informe o ID da conta de anúncios deste cliente (painel Meta Ads)." }, 400);
+    if (period_id) {
+      const { data: period } = await supabase.from("meta_ads_periods").select("*").eq("id", period_id).eq("client_id", client_id).maybeSingle();
+      if (!period) return json({ error: "Período não encontrado." }, 404);
+      return json({ ok: true, ...(await syncPeriod(supabase, client, period)) });
+    }
     const { data: month } = await supabase.from("deliverable_months").select("id, month_label, report_locked").eq("id", deliverable_month_id).eq("client_id", client_id).maybeSingle();
     if (!month) return json({ error: "Mês não encontrado." }, 404);
     return json({ ok: true, ...(await syncOne(supabase, client, month)) });
