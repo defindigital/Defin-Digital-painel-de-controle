@@ -90,6 +90,19 @@ button,input,select,textarea{font-family:inherit}
 .ads-cmp th,.ads-cmp td{padding:8px 10px;border-bottom:1px solid var(--border);text-align:right}
 .ads-cmp th:first-child,.ads-cmp td:first-child{text-align:left}
 .ads-cmp td.ads-good{color:#1f6b3a;font-weight:600}.ads-cmp td.ads-bad{color:#b3392f;font-weight:600}
+.th-chip{font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap}
+.th-draft{background:#eceff3;color:#5b6876}.th-wait{background:#fbe8cc;color:#9a5a12}.th-ok{background:#e3f4e8;color:#1f6b3a}.th-no{background:#fbe1de;color:#b3392f}
+.th-banner{background:#fff6e5;border:1px solid #f1d49b;margin-bottom:14px}
+.th-row{display:grid;grid-template-columns:140px 110px 1fr auto auto;gap:8px;align-items:center;margin-bottom:8px}
+.th-row .th-sug{grid-column:1/-1}.th-add{display:grid;grid-template-columns:140px 110px 1fr auto;gap:8px;margin:12px 0}
+.th-sug{background:#f4f7fb;border-radius:8px;padding:8px 10px;font-size:13px}.th-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.th-card{border:1px solid var(--border);border-left:4px solid #e2a53b;border-radius:10px;padding:14px;margin-bottom:10px;background:var(--surface)}
+.th-card.aprovado{border-left-color:#39a35e}.th-card.recusado{border-left-color:#d4574b}
+.th-card-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.th-date{font-size:12px;color:var(--ink-soft)}.th-title{font-size:15px;font-weight:600;margin-top:2px}
+.th-theme{margin:0 0 12px;font-size:15px}.th-btn{border:0;border-radius:8px;padding:9px 14px;font-weight:600;cursor:pointer;font-size:13px}
+.th-approve{background:#1e9e5a;color:#fff}.th-reject{background:#d4574b;color:#fff}.th-suggest{background:#eef2f7;color:#2b3a4a}.th-btn:disabled{opacity:.45;cursor:default}
+.th-suggest-box{margin-top:10px}.th-suggest-box textarea{width:100%;margin-bottom:8px}
+@media(max-width:700px){.th-row,.th-add{grid-template-columns:1fr}}
 .metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:16px}
 .metric-card{background:var(--surface);border:1px solid var(--border);border-top:3px solid var(--border);border-radius:var(--radius-sm);padding:16px;box-shadow:var(--shadow-sm);transition:box-shadow .15s,transform .15s}
 .metric-card:hover{box-shadow:var(--shadow-md);transform:translateY(-1px)}
@@ -382,7 +395,7 @@ const REPORT_SECTIONS = [
 ];
 const app = document.getElementById("app");
 
-let state = { session:null, profile:null, clients:[], selectedClientId:null, months:[], selectedMonth:null, checklist:[], calendarPosts:[], socialInsights:{}, prevSocialInsights:{}, prevMonth:null, monthlyReport:null, proposal:null, billing:null, metaAdsData:null, metaAdsPeriods:[], cmpA:null, cmpB:null, gmnData:null, tab:"resumo", adminTab:"entregaveis", adminView:"hub", hubTab:"lista", recoveryMode:false, forceChangePassword:false, welcomeShown:false };
+let state = { session:null, profile:null, clients:[], selectedClientId:null, months:[], selectedMonth:null, checklist:[], calendarPosts:[], socialInsights:{}, prevSocialInsights:{}, prevMonth:null, monthlyReport:null, proposal:null, billing:null, metaAdsData:null, metaAdsPeriods:[], themeWeeks:[], themeItems:[], thSuggestOpen:null, cmpA:null, cmpB:null, gmnData:null, tab:"resumo", adminTab:"entregaveis", adminView:"hub", hubTab:"lista", recoveryMode:false, forceChangePassword:false, welcomeShown:false };
 
 async function init(){
   // Detecta se o usuário chegou aqui por um link de recuperação de senha
@@ -422,6 +435,7 @@ async function loadMonthsFor(clientId, isAdmin){
   state.selectedMonth = state.months.length ? state.months[state.months.length-1] : null;
   await loadProposal(clientId);
   await loadMetaAdsPeriods(clientId);
+  await loadThemes(clientId);
   if (isAdmin) await loadBilling(clientId);
   if (state.selectedMonth) {
     await loadCalendar(state.selectedMonth.id);
@@ -717,6 +731,8 @@ function renderClient(){
     tabContent = metaAdsFormHtml(false);
   } else if (state.tab === "gmn"){
     tabContent = gmnFormHtml(false);
+  } else if (state.tab === "temas"){
+    tabContent = themesClientHtml();
   } else if (state.tab === "proposta"){
     tabContent = proposalHtml(false);
   }
@@ -728,9 +744,11 @@ function renderClient(){
   app.innerHTML = topbarHtml(false) + `<div class="shell">
     ${processBannerHtml(c)}
     <div class="client-links">${links}</div>
+    ${themesBannerHtml()}
     ${monthSwitchHtml(false, c)}
     <div class="tabs">
       <button data-tab="resumo" class="${state.tab==="resumo"?"active":""}">Resumo</button>
+      <button data-tab="temas" class="${state.tab==="temas"?"active":""}">Temas${themesPendingCount()?` (${themesPendingCount()})`:""}</button>
       <button data-tab="calendario" class="${state.tab==="calendario"?"active":""}">Calendário</button>
       ${hasRedes(c) ? `<button data-tab="redes" class="${state.tab==="redes"?"active":""}">Redes sociais</button>` : ""}
       ${metaAdsTab}${gmnTab}
@@ -1276,6 +1294,8 @@ function renderAdmin(){
     tabContent = metaAdsFormHtml(true);
   } else if (m && state.adminTab === "gmn"){
     tabContent = gmnFormHtml(true);
+  } else if (state.adminTab === "temas"){
+    tabContent = themesAdminHtml();
   } else if (state.adminTab === "proposta"){
     tabContent = proposalHtml(true);
   }
@@ -1289,6 +1309,7 @@ function renderAdmin(){
     ${monthSwitchHtml(true, currentClient)}
     <div class="tabs">
       <button data-admintab="entregaveis" class="${state.adminTab==="entregaveis"?"active":""}">Entregáveis</button>
+      <button data-admintab="temas" class="${state.adminTab==="temas"?"active":""}">Temas${(state.themeItems||[]).filter(i=>i.status==="recusado").length?` (${(state.themeItems||[]).filter(i=>i.status==="recusado").length}⚠)`:""}</button>
       <button data-admintab="calendario" class="${state.adminTab==="calendario"?"active":""}">Calendário</button>
       ${hasRedes(currentClient) ? `<button data-admintab="redes" class="${state.adminTab==="redes"?"active":""}">Redes sociais</button>` : ""}
       ${metaAdsTab}${gmnTab}
@@ -1405,6 +1426,210 @@ function socialCardHtml(platformKey, label, data, editable){
     <p class="admin-summary-text">${data.note ? data.note : "Sem anotações para este período."}</p>
   </div>`;
 }
+
+
+// ---------- Temas semanais: Léo propõe, cliente aprova / recusa / sugere ----------
+async function loadThemes(clientId){
+  const w = await sb.from("theme_weeks").select("*").eq("client_id", clientId).order("week_start", { ascending:false });
+  const i = await sb.from("theme_items").select("*").eq("client_id", clientId).order("sort_order", { ascending:true }).order("post_date", { ascending:true });
+  state.themeWeeks = w.data || [];
+  state.themeItems = i.data || [];
+}
+function thEsc(t){ return String(t==null?"":t).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+const TH_STATUS = { rascunho:["Rascunho","th-draft"], aguardando:["Aguardando aprovação","th-wait"], aprovado:["Aprovado","th-ok"], recusado:["Recusado","th-no"] };
+function thChip(st){ const [t,c] = TH_STATUS[st] || [st,""]; return `<span class="th-chip ${c}">${t}</span>`; }
+function thWeekSummary(items){
+  if (!items.length) return "sem publicações";
+  const n = st => items.filter(i=>i.status===st).length;
+  const parts = [];
+  if (n("aprovado")) parts.push(`${n("aprovado")} aprovado(s)`);
+  if (n("aguardando")) parts.push(`${n("aguardando")} aguardando`);
+  if (n("recusado")) parts.push(`${n("recusado")} recusado(s)`);
+  if (n("rascunho")) parts.push(`${n("rascunho")} rascunho(s)`);
+  return parts.join(" · ");
+}
+function themesPendingCount(){ return (state.themeItems||[]).filter(i => i.status === "aguardando").length; }
+function themesBannerHtml(){
+  const n = themesPendingCount();
+  if (!n) return "";
+  return `<div class="panel th-banner"><strong>📝 ${n} publicação(ões) aguardando a sua aprovação.</strong> <button class="save" data-tab="temas" id="thGoBtn" style="margin-left:8px">Ver temas</button></div>`;
+}
+function themesAdminHtml(){
+  const weeks = state.themeWeeks || [];
+  const typeOpts = (sel) => ["post","reel","story","artigo"].map(t=>`<option value="${t}" ${sel===t?"selected":""}>${TYPE_LABEL[t]}</option>`).join("");
+  const today = new Date().toISOString().slice(0,10);
+  const cards = weeks.map(w => {
+    const items = (state.themeItems||[]).filter(i => i.week_id === w.id);
+    const rows = items.map(i => `<div class="th-row">
+        <input type="date" data-thchange="item" data-field="post_date" data-id="${i.id}" value="${i.post_date||""}">
+        <select data-thchange="item" data-field="type" data-id="${i.id}">${typeOpts(i.type)}</select>
+        <input type="text" data-thchange="item" data-field="title" data-id="${i.id}" value="${thEsc(i.title)}" placeholder="Título / descrição da publicação">
+        ${thChip(i.status)}
+        <button class="save" data-th="delitem" data-id="${i.id}" title="Excluir">✕</button>
+        ${i.status==="recusado" ? `<div class="th-sug">${i.suggestion ? `💡 Sugestão do cliente: <em>${thEsc(i.suggestion)}</em>` : "O cliente recusou sem sugerir outro tema."}
+          <div class="th-actions">${i.suggestion ? `<button class="save" data-th="accept" data-id="${i.id}">Aceitar sugestão</button>` : ""}<button class="save" data-th="resend" data-id="${i.id}">Reenviar ao cliente</button></div></div>` : ""}
+      </div>`).join("");
+    const sent = w.sent_at ? `Enviada em ${new Date(w.sent_at).toLocaleString("pt-BR")}` : "Ainda não enviada ao cliente";
+    const approvedPending = items.filter(i => i.status==="aprovado" && !i.in_calendar).length;
+    return `<div class="panel" style="margin-bottom:14px">
+      <h3 style="margin-bottom:4px">Semana ${adsFmtDate(w.week_start)} a ${adsFmtDate(w.week_end)}</h3>
+      <p class="panel-sub">${sent} · ${thWeekSummary(items)}</p>
+      <label class="field-label">Tema da semana<input type="text" data-thchange="week" data-field="theme" data-id="${w.id}" value="${thEsc(w.theme)}"></label>
+      <div class="th-list">${rows || '<p class="panel-sub">Nenhuma publicação ainda.</p>'}</div>
+      <div class="th-add">
+        <input type="date" id="thNewDate-${w.id}" value="${today}">
+        <select id="thNewType-${w.id}">${typeOpts("post")}</select>
+        <input type="text" id="thNewTitle-${w.id}" placeholder="Título / descrição da nova publicação">
+        <button class="save" data-th="additem" data-id="${w.id}">+ Publicação</button>
+      </div>
+      <div class="ads-period-actions">
+        <button class="save sync-btn" data-th="send" data-id="${w.id}">📨 Enviar para aprovação</button>
+        <button class="save" data-th="tocal" data-id="${w.id}" ${approvedPending?"":"disabled"}>📅 Aprovados → Calendário (${approvedPending})</button>
+        <button class="save" data-th="delweek" data-id="${w.id}">Excluir semana</button>
+      </div>
+      <p class="panel-sub" id="thMsg-${w.id}" style="margin:8px 0 0"></p>
+    </div>`;
+  }).join("");
+  const d = new Date(); const dow = (d.getDay()+6)%7; d.setDate(d.getDate()-dow+7); // próxima segunda
+  const ws = d.toISOString().slice(0,10); d.setDate(d.getDate()+6); const we = d.toISOString().slice(0,10);
+  return `<div class="panel" style="margin-bottom:14px">
+      <h3>Temas da semana — aprovação do cliente</h3>
+      <p class="panel-sub">Crie a semana, escreva o tema e as publicações e envie. O cliente aprova, recusa ou sugere outro tema no painel dele${""} e recebe um aviso por e-mail (quando o e-mail estiver configurado).</p>
+      <div class="admin-field-grid" style="grid-template-columns:repeat(3,1fr)">
+        <label class="field-label">Início<input type="date" id="thNewWs" value="${ws}"></label>
+        <label class="field-label">Fim<input type="date" id="thNewWe" value="${we}"></label>
+        <label class="field-label">Tema da semana<input type="text" id="thNewTheme" placeholder="ex.: Gestão das emoções"></label>
+      </div>
+      <button class="save" data-th="addweek">+ Nova semana</button>
+      <p class="panel-sub" id="thNewMsg" style="margin:8px 0 0"></p>
+    </div>${cards}`;
+}
+function themesClientHtml(){
+  const weeks = (state.themeWeeks||[]).filter(w => w.sent_at);
+  if (!weeks.length) return `<div class="panel"><h3>Temas das publicações</h3><p class="panel-sub">Quando houver temas novos para aprovar, eles aparecem aqui.</p></div>`;
+  return weeks.map(w => {
+    const items = (state.themeItems||[]).filter(i => i.week_id === w.id && i.status !== "rascunho");
+    const waiting = items.filter(i => i.status === "aguardando").length;
+    const rows = items.map(i => {
+      const open = state.thSuggestOpen === i.id;
+      return `<div class="th-card ${i.status}">
+        <div class="th-card-top"><div><div class="th-date">${i.post_date ? adsFmtDate(i.post_date) + " · " : ""}${TYPE_LABEL[i.type]||i.type}</div><div class="th-title">${thEsc(i.title)}</div></div>${thChip(i.status)}</div>
+        ${i.status==="recusado" && i.suggestion ? `<div class="th-sug">💡 Sua sugestão: <em>${thEsc(i.suggestion)}</em></div>` : ""}
+        <div class="th-actions">
+          <button class="th-btn th-approve" data-thc="approve" data-id="${i.id}" ${i.status==="aprovado"?"disabled":""}>✔ Aprovar</button>
+          <button class="th-btn th-reject" data-thc="reject" data-id="${i.id}" ${i.status==="recusado"&&!i.suggestion?"disabled":""}>✖ Recusar</button>
+          <button class="th-btn th-suggest" data-thc="suggest" data-id="${i.id}">✏ Sugerir outro tema</button>
+        </div>
+        ${open ? `<div class="th-suggest-box"><textarea id="thSug-${i.id}" rows="3" placeholder="Escreva o tema que você prefere…">${thEsc(i.suggestion||"")}</textarea>
+          <button class="th-btn th-approve" data-thc="sendsug" data-id="${i.id}">Enviar sugestão</button></div>` : ""}
+      </div>`;
+    }).join("");
+    return `<div class="panel" style="margin-bottom:14px">
+      <h3 style="margin-bottom:2px">Semana ${adsFmtDate(w.week_start)} a ${adsFmtDate(w.week_end)}</h3>
+      <p class="th-theme">Tema da semana: <strong>${thEsc(w.theme)}</strong></p>
+      ${waiting ? `<button class="th-btn th-approve" data-thc="approveweek" data-id="${w.id}" style="margin-bottom:12px">✔ Aprovar a semana inteira (${waiting})</button>` : ""}
+      ${rows}
+    </div>`;
+  }).join("");
+}
+async function handleThemeAdmin(btn){
+  const act = btn.dataset.th, id = btn.dataset.id, clientId = state.selectedClientId;
+  const msgEl = id && document.getElementById("thMsg-"+id) || document.getElementById("thNewMsg");
+  const say = t => { if (msgEl) msgEl.textContent = t; };
+  try {
+    if (act === "addweek"){
+      const week_start = document.getElementById("thNewWs").value, week_end = document.getElementById("thNewWe").value;
+      const theme = document.getElementById("thNewTheme").value.trim();
+      if (!week_start || !week_end || week_end < week_start || !theme){ say("Preencha início, fim e o tema da semana."); return; }
+      const { error } = await sb.from("theme_weeks").insert({ client_id: clientId, week_start, week_end, theme });
+      if (error){ say("Erro: " + error.message); return; }
+    } else if (act === "delweek"){
+      if (!confirm("Excluir esta semana e todas as publicações dela?")) return;
+      const { error } = await sb.from("theme_weeks").delete().eq("id", id);
+      if (error){ say("Erro: " + error.message); return; }
+    } else if (act === "additem"){
+      const title = document.getElementById("thNewTitle-"+id).value.trim();
+      if (!title){ say("Escreva o título da publicação."); return; }
+      const w = state.themeWeeks.find(x => x.id === id);
+      const count = state.themeItems.filter(i => i.week_id === id).length;
+      const { error } = await sb.from("theme_items").insert({ week_id: id, client_id: clientId, post_date: document.getElementById("thNewDate-"+id).value || null, type: document.getElementById("thNewType-"+id).value, title, status: w && w.sent_at ? "aguardando" : "rascunho", sort_order: count });
+      if (error){ say("Erro: " + error.message); return; }
+    } else if (act === "delitem"){
+      const { error } = await sb.from("theme_items").delete().eq("id", id);
+      if (error){ say("Erro: " + error.message); return; }
+    } else if (act === "accept"){
+      const it = state.themeItems.find(x => x.id === id);
+      const { error } = await sb.from("theme_items").update({ title: it.suggestion, status: "aprovado", suggestion: null, decided_at: new Date().toISOString() }).eq("id", id);
+      if (error){ alert("Erro: " + error.message); return; }
+    } else if (act === "resend"){
+      const { error } = await sb.from("theme_items").update({ status: "aguardando", suggestion: null, decided_at: null }).eq("id", id);
+      if (error){ alert("Erro: " + error.message); return; }
+    } else if (act === "send"){
+      btn.disabled = true; say("Enviando…");
+      const items = state.themeItems.filter(i => i.week_id === id && i.status === "rascunho");
+      if (items.length){
+        const { error } = await sb.from("theme_items").update({ status: "aguardando" }).eq("week_id", id).eq("status", "rascunho");
+        if (error){ say("Erro: " + error.message); btn.disabled = false; return; }
+      }
+      const { error: e2 } = await sb.from("theme_weeks").update({ sent_at: new Date().toISOString() }).eq("id", id);
+      if (e2){ say("Erro: " + e2.message); btn.disabled = false; return; }
+      const { data } = await sb.functions.invoke("notify-themes", { body: { client_id: clientId, week_id: id } });
+      await loadThemes(clientId); render();
+      const el = document.getElementById("thMsg-"+id);
+      if (el) el.textContent = data && data.sent ? "✔ Enviado. O cliente recebeu o aviso por e-mail." : "✔ Enviado ao painel do cliente. " + ((data && data.reason) || "Aviso por e-mail não enviado.");
+      return;
+    } else if (act === "tocal"){
+      const client = currentClientObj();
+      const items = state.themeItems.filter(i => i.week_id === id && i.status === "aprovado" && !i.in_calendar);
+      let done = 0, skipped = 0;
+      for (const it of items){
+        const when = it.post_date ? new Date(it.post_date + "T12:00:00Z") : null;
+        const m = when && state.months.find(mm => { const r = monthPeriodRange(mm.month_label, client); return when >= r.start && when <= new Date(r.end.getTime()+86399999); });
+        if (!m){ skipped++; continue; }
+        const { error } = await sb.from("calendar_posts").insert({ client_id: clientId, deliverable_month_id: m.id, post_date: it.post_date, channel: it.channel || "instagram", type: it.type, title: it.title, status: "planejado" });
+        if (!error){ await sb.from("theme_items").update({ in_calendar: true }).eq("id", it.id); done++; } else skipped++;
+      }
+      await loadThemes(clientId); render();
+      const el = document.getElementById("thMsg-"+id);
+      if (el) el.textContent = `${done} publicação(ões) enviada(s) ao Calendário` + (skipped ? ` · ${skipped} sem data ou sem mês cadastrado` : "") + ".";
+      return;
+    }
+    await loadThemes(clientId); render();
+  } catch (e) { say("Erro: " + e.message); }
+}
+async function handleThemeClient(btn){
+  const act = btn.dataset.thc, id = btn.dataset.id, now = new Date().toISOString();
+  const run = async (q) => { const { error } = await q; if (error) alert("Erro: " + error.message); };
+  if (act === "approve") await run(sb.from("theme_items").update({ status:"aprovado", decided_at: now }).eq("id", id));
+  else if (act === "reject") await run(sb.from("theme_items").update({ status:"recusado", decided_at: now }).eq("id", id));
+  else if (act === "suggest"){ state.thSuggestOpen = state.thSuggestOpen === id ? null : id; render(); return; }
+  else if (act === "sendsug"){
+    const txt = (document.getElementById("thSug-"+id).value || "").trim();
+    if (!txt){ alert("Escreva o tema que você prefere."); return; }
+    await run(sb.from("theme_items").update({ status:"recusado", suggestion: txt, decided_at: now }).eq("id", id));
+    state.thSuggestOpen = null;
+  } else if (act === "approveweek"){
+    await run(sb.from("theme_items").update({ status:"aprovado", decided_at: now }).eq("week_id", id).eq("status","aguardando"));
+  }
+  await loadThemes(state.selectedClientId || (state.profile && state.profile.client_id));
+  render();
+}
+document.addEventListener("click", e => {
+  const a = e.target.closest && e.target.closest("[data-th]");
+  if (a && !a.disabled) handleThemeAdmin(a);
+  const c = e.target.closest && e.target.closest("[data-thc]");
+  if (c && !c.disabled) handleThemeClient(c);
+});
+document.addEventListener("change", async e => {
+  const t = e.target;
+  if (!t.dataset || !t.dataset.thchange) return;
+  const table = t.dataset.thchange === "week" ? "theme_weeks" : "theme_items";
+  const patch = {}; patch[t.dataset.field] = t.value || null;
+  if (t.dataset.field === "title" || t.dataset.field === "theme") patch[t.dataset.field] = t.value;
+  const { error } = await sb.from(table).update(patch).eq("id", t.dataset.id);
+  if (error) alert("Erro ao salvar: " + error.message);
+  else { const row = (table === "theme_weeks" ? state.themeWeeks : state.themeItems).find(x => x.id === t.dataset.id); if (row) Object.assign(row, patch); }
+});
 
 // ---------- Meta Ads: períodos (semanais) + comparativo ----------
 function adsFmtDate(iso){ const [y,m,d] = String(iso).slice(0,10).split("-"); return `${d}/${m}`; }
