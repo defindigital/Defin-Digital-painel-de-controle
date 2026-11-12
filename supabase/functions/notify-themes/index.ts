@@ -7,8 +7,8 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") || "";
-const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") || "";
-const RESEND_FROM = Deno.env.get("RESEND_FROM") || "Defin Digital <painel@defindigital.com.br>";
+const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") || Deno.env.get("Send APD Key") || "";
+const RESEND_FROM = Deno.env.get("RESEND_FROM") || Deno.env.get("Send From") || "Defin Digital <painel@mail.defindigital.com.br>";
 const PANEL_URL = Deno.env.get("PANEL_URL") || "https://paineldecontrole.defindigital.com.br";
 const CORS = {
   "Access-Control-Allow-Origin": "*",
