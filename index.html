@@ -539,6 +539,8 @@ async function loadClientData(clientId){
   state.months = data || [];
   state.selectedMonth = state.months.length ? state.months[state.months.length-1] : null;
   await loadProposal(clientId);
+  await loadMetaAdsPeriods(clientId);
+  await loadThemes(clientId);
   if (state.selectedMonth) {
     await loadCalendar(state.selectedMonth.id);
     await loadSocialInsights(state.selectedMonth.id);
