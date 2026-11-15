@@ -93,6 +93,7 @@ button,input,select,textarea{font-family:inherit}
 .th-chip{font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap}
 .th-draft{background:#eceff3;color:#5b6876}.th-wait{background:#fbe8cc;color:#9a5a12}.th-ok{background:#e3f4e8;color:#1f6b3a}.th-no{background:#fbe1de;color:#b3392f}
 .th-banner{background:#fff6e5;border:1px solid #f1d49b;margin-bottom:14px}
+.th-lock{font-size:16px;text-align:center}
 .th-row{display:grid;grid-template-columns:140px 110px 1fr auto auto;gap:8px;align-items:center;margin-bottom:8px}
 .th-row .th-sug{grid-column:1/-1}.th-add{display:grid;grid-template-columns:140px 110px 1fr auto;gap:8px;margin:12px 0}
 .th-sug{background:#f4f7fb;border-radius:8px;padding:8px 10px;font-size:13px}.th-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
@@ -406,8 +407,11 @@ async function init(){
   state.session = session;
   if (session && !state.recoveryMode) await loadProfile();
   sb.auth.onAuthStateChange(async (event, session) => {
+    const sameUser = !!(session && state.session && state.profile && state.session.user.id === session.user.id);
     state.session = session;
     if (event === "PASSWORD_RECOVERY") { state.recoveryMode = true; render(); return; }
+    // renovação de token / volta à aba disparam eventos repetidos: não recarregar nem redesenhar a tela
+    if (sameUser && !state.recoveryMode && event !== "SIGNED_OUT" && event !== "USER_UPDATED") return;
     if (session && !state.recoveryMode) { await loadProfile(); } else if (!session) { state.profile = null; render(); }
   });
   render();
@@ -556,7 +560,26 @@ async function loadClientData(clientId){
 function pct(done, target){ if(!target) return 0; return Math.min(100, Math.round((done/target)*100)); }
 
 // ---------- RENDER ----------
+function textFieldKey(el){
+  if (!el || !el.tagName) return null;
+  const t = el.tagName;
+  if (!(t === "TEXTAREA" || (t === "INPUT" && ["text","search","email","number",""].includes(el.type || "text")))) return null;
+  if (el.id) return "#" + el.id;
+  const d = el.dataset || {};
+  return d.thchange ? `${d.thchange}:${d.field}:${d.id}` : null;
+}
+// redesenha a tela sem perder o que está sendo digitado (campo em foco: texto e cursor)
 function render(){
+  const el = document.activeElement, key = textFieldKey(el);
+  const snap = key ? { key, value: el.value, start: el.selectionStart, end: el.selectionEnd, dirty: el.value !== el.defaultValue } : null;
+  renderCore();
+  if (!snap || !snap.dirty) return;
+  const next = [...document.querySelectorAll("textarea,input")].find(x => textFieldKey(x) === snap.key);
+  if (!next || next === el) return;
+  next.value = snap.value;
+  try { next.focus(); next.setSelectionRange(snap.start, snap.end); } catch (_) {}
+}
+function renderCore(){
   if (state.recoveryMode) return renderNewPassword(false);
   if (!state.session) return renderLogin();
   if (state.forceChangePassword) return renderNewPassword(true);
@@ -1311,7 +1334,7 @@ function renderAdmin(){
     ${monthSwitchHtml(true, currentClient)}
     <div class="tabs">
       <button data-admintab="entregaveis" class="${state.adminTab==="entregaveis"?"active":""}">Entregáveis</button>
-      <button data-admintab="temas" class="${state.adminTab==="temas"?"active":""}">Temas${(state.themeItems||[]).filter(i=>i.status==="recusado").length?` (${(state.themeItems||[]).filter(i=>i.status==="recusado").length}⚠)`:""}</button>
+      <button data-admintab="temas" class="${state.adminTab==="temas"?"active":""}">Temas${thRefusedCount()?` (${thRefusedCount()}⚠)`:""}</button>
       <button data-admintab="calendario" class="${state.adminTab==="calendario"?"active":""}">Calendário</button>
       ${hasRedes(currentClient) ? `<button data-admintab="redes" class="${state.adminTab==="redes"?"active":""}">Redes sociais</button>` : ""}
       ${metaAdsTab}${gmnTab}
@@ -1450,7 +1473,9 @@ function thWeekSummary(items){
   if (n("rascunho")) parts.push(`${n("rascunho")} rascunho(s)`);
   return parts.join(" · ");
 }
-function themesPendingCount(){ return (state.themeItems||[]).filter(i => i.status === "aguardando").length; }
+function themesPendingCount(){ return (state.themeItems||[]).filter(i => i.status === "aguardando").length + (state.themeWeeks||[]).filter(w => w.sent_at && w.theme_status === "aguardando").length; }
+function thRefusedCount(){ return (state.themeItems||[]).filter(i => i.status === "recusado").length + (state.themeWeeks||[]).filter(w => w.theme_status === "recusado").length; }
+function thLocked(i){ return i.status === "aprovado"; }
 function themesBannerHtml(){
   const n = themesPendingCount();
   if (!n) return "";
@@ -1463,11 +1488,10 @@ function themesAdminHtml(){
   const cards = weeks.map(w => {
     const items = (state.themeItems||[]).filter(i => i.week_id === w.id);
     const rows = items.map(i => `<div class="th-row">
-        <input type="date" data-thchange="item" data-field="post_date" data-id="${i.id}" value="${i.post_date||""}">
-        <select data-thchange="item" data-field="type" data-id="${i.id}">${typeOpts(i.type)}</select>
-        <input type="text" data-thchange="item" data-field="title" data-id="${i.id}" value="${thEsc(i.title)}" placeholder="Título / descrição da publicação">
-        ${thChip(i.status)}
-        <button class="save" data-th="delitem" data-id="${i.id}" title="Excluir">✕</button>
+        <input type="date" data-thchange="item" data-field="post_date" data-id="${i.id}" value="${i.post_date||""}" ${thLocked(i)?"disabled":""}>
+        <select data-thchange="item" data-field="type" data-id="${i.id}" ${thLocked(i)?"disabled":""}>${typeOpts(i.type)}</select>
+        <input type="text" data-thchange="item" data-field="title" data-id="${i.id}" value="${thEsc(i.title)}" placeholder="Título / descrição da publicação" ${thLocked(i)?"disabled":""}>
+        ${thChip(i.status)}${thLocked(i) ? `<span class="th-lock" title="Aprovado: travado">🔒</span>` : `<button class="save" data-th="delitem" data-id="${i.id}" title="Excluir">✕</button>`}
         ${i.status==="recusado" ? `<div class="th-sug">${i.suggestion ? `💡 Sugestão do cliente: <em>${thEsc(i.suggestion)}</em>` : "O cliente recusou sem sugerir outro tema."}
           <div class="th-actions">${i.suggestion ? `<button class="save" data-th="accept" data-id="${i.id}">Aceitar sugestão</button>` : ""}<button class="save" data-th="resend" data-id="${i.id}">Reenviar ao cliente</button></div></div>` : ""}
       </div>`).join("");
@@ -1476,7 +1500,9 @@ function themesAdminHtml(){
     return `<div class="panel" style="margin-bottom:14px">
       <h3 style="margin-bottom:4px">Semana ${adsFmtDate(w.week_start)} a ${adsFmtDate(w.week_end)}</h3>
       <p class="panel-sub">${sent} · ${thWeekSummary(items)}</p>
-      <label class="field-label">Tema da semana<input type="text" data-thchange="week" data-field="theme" data-id="${w.id}" value="${thEsc(w.theme)}"></label>
+      <label class="field-label">Tema da semana ${w.sent_at ? thChip(w.theme_status || "aguardando") : ""}${w.theme_status==="aprovado" ? " 🔒" : ""}<input type="text" data-thchange="week" data-field="theme" data-id="${w.id}" value="${thEsc(w.theme)}" ${w.theme_status==="aprovado"?"disabled":""}></label>
+      ${w.theme_status==="recusado" ? `<div class="th-sug">${w.theme_suggestion ? `💡 O cliente sugeriu outro tema da semana: <em>${thEsc(w.theme_suggestion)}</em>` : "O cliente não aprovou o tema da semana."}
+        <div class="th-actions">${w.theme_suggestion ? `<button class="save" data-th="acceptheme" data-id="${w.id}">Aceitar sugestão de tema</button>` : ""}<button class="save" data-th="resendtheme" data-id="${w.id}">Manter e reenviar ao cliente</button></div></div>` : ""}
       <div class="th-list">${rows || '<p class="panel-sub">Nenhuma publicação ainda.</p>'}</div>
       <div class="th-add">
         <input type="date" id="thNewDate-${w.id}" value="${today}">
@@ -1487,7 +1513,7 @@ function themesAdminHtml(){
       <div class="ads-period-actions">
         <button class="save sync-btn" data-th="send" data-id="${w.id}">📨 Enviar para aprovação</button>
         <button class="save" data-th="tocal" data-id="${w.id}" ${approvedPending?"":"disabled"}>📅 Aprovados → Calendário (${approvedPending})</button>
-        <button class="save" data-th="delweek" data-id="${w.id}">Excluir semana</button>
+        <button class="save" data-th="delweek" data-id="${w.id}" ${(w.theme_status==="aprovado" || items.some(thLocked)) ? 'disabled title="Há itens aprovados: semana travada"' : ""}>Excluir semana</button>
       </div>
       <p class="panel-sub" id="thMsg-${w.id}" style="margin:8px 0 0"></p>
     </div>`;
@@ -1528,7 +1554,16 @@ function themesClientHtml(){
     }).join("");
     return `<div class="panel" style="margin-bottom:14px">
       <h3 style="margin-bottom:2px">Semana ${adsFmtDate(w.week_start)} a ${adsFmtDate(w.week_end)}</h3>
-      <p class="th-theme">Tema da semana: <strong>${thEsc(w.theme)}</strong></p>
+      <div class="th-card ${w.theme_status||"aguardando"}" style="margin-bottom:12px">
+        <div class="th-card-top"><div><div class="th-date">Tema da semana</div><div class="th-title">${thEsc(w.theme)}</div></div>${thChip(w.theme_status||"aguardando")}</div>
+        ${w.theme_status==="recusado" && w.theme_suggestion ? `<div class="th-sug">💡 Sua sugestão de tema: <em>${thEsc(w.theme_suggestion)}</em></div>` : ""}
+        ${w.theme_status==="aprovado" ? "" : `<div class="th-actions">
+          <button class="th-btn th-approve" data-thc="approvetheme" data-id="${w.id}">✔ Aprovar o tema</button>
+          <button class="th-btn th-suggest" data-thc="suggesttheme" data-id="${w.id}">✏ Sugerir outro tema</button>
+        </div>`}
+        ${state.thThemeSugOpen === w.id && w.theme_status!=="aprovado" ? `<div class="th-suggest-box"><textarea id="thThemeSug-${w.id}" rows="2" placeholder="Qual tema da semana você prefere?">${thEsc(w.theme_suggestion||"")}</textarea>
+          <button class="th-btn th-approve" data-thc="sendthemesug" data-id="${w.id}">Enviar sugestão de tema</button></div>` : ""}
+      </div>
       ${waiting ? `<button class="th-btn th-approve" data-thc="approveweek" data-id="${w.id}" style="margin-bottom:12px">✔ Aprovar a semana inteira (${waiting})</button>` : ""}
       ${rows}
     </div>`;
@@ -1562,6 +1597,13 @@ async function handleThemeAdmin(btn){
     } else if (act === "accept"){
       const it = state.themeItems.find(x => x.id === id);
       const { error } = await sb.from("theme_items").update({ title: it.suggestion, status: "aprovado", suggestion: null, decided_at: new Date().toISOString() }).eq("id", id);
+      if (error){ alert("Erro: " + error.message); return; }
+    } else if (act === "acceptheme"){
+      const w = state.themeWeeks.find(x => x.id === id);
+      const { error } = await sb.from("theme_weeks").update({ theme: w.theme_suggestion, theme_status: "aprovado", theme_suggestion: null }).eq("id", id);
+      if (error){ alert("Erro: " + error.message); return; }
+    } else if (act === "resendtheme"){
+      const { error } = await sb.from("theme_weeks").update({ theme_status: "aguardando", theme_suggestion: null }).eq("id", id);
       if (error){ alert("Erro: " + error.message); return; }
     } else if (act === "resend"){
       const { error } = await sb.from("theme_items").update({ status: "aguardando", suggestion: null, decided_at: null }).eq("id", id);
@@ -1601,9 +1643,17 @@ async function handleThemeAdmin(btn){
 }
 async function handleThemeClient(btn){
   const act = btn.dataset.thc, id = btn.dataset.id, now = new Date().toISOString();
-  const run = async (q) => { const { error } = await q; if (error) alert("Erro: " + error.message); };
+  const run = async (q) => { const { error } = await q; if (error) alert("Erro: " + (error.message || error)); };
   if (act === "approve") await run(sb.from("theme_items").update({ status:"aprovado", decided_at: now }).eq("id", id));
   else if (act === "reject") await run(sb.from("theme_items").update({ status:"recusado", decided_at: now }).eq("id", id));
+  else if (act === "approvetheme"){ await run(sb.rpc("decide_week_theme", { p_week: id, p_action: "approve" })); }
+  else if (act === "suggesttheme"){ state.thThemeSugOpen = state.thThemeSugOpen === id ? null : id; render(); return; }
+  else if (act === "sendthemesug"){
+    const txt = (document.getElementById("thThemeSug-"+id).value || "").trim();
+    if (!txt){ alert("Escreva o tema que você prefere."); return; }
+    await run(sb.rpc("decide_week_theme", { p_week: id, p_action: "suggest", p_text: txt }));
+    state.thThemeSugOpen = null;
+  }
   else if (act === "suggest"){ state.thSuggestOpen = state.thSuggestOpen === id ? null : id; render(); return; }
   else if (act === "sendsug"){
     const txt = (document.getElementById("thSug-"+id).value || "").trim();
@@ -1611,6 +1661,8 @@ async function handleThemeClient(btn){
     await run(sb.from("theme_items").update({ status:"recusado", suggestion: txt, decided_at: now }).eq("id", id));
     state.thSuggestOpen = null;
   } else if (act === "approveweek"){
+    const wk = (state.themeWeeks||[]).find(x => x.id === id);
+    if (wk && wk.theme_status !== "aprovado") await run(sb.rpc("decide_week_theme", { p_week: id, p_action: "approve" }));
     await run(sb.from("theme_items").update({ status:"aprovado", decided_at: now }).eq("week_id", id).eq("status","aguardando"));
   }
   await loadThemes(state.selectedClientId || (state.profile && state.profile.client_id));
@@ -1628,6 +1680,8 @@ document.addEventListener("change", async e => {
   const table = t.dataset.thchange === "week" ? "theme_weeks" : "theme_items";
   const patch = {}; patch[t.dataset.field] = t.value || null;
   if (t.dataset.field === "title" || t.dataset.field === "theme") patch[t.dataset.field] = t.value;
+  const wk = table === "theme_weeks" ? state.themeWeeks.find(x => x.id === t.dataset.id) : null;
+  if (wk && wk.sent_at && t.dataset.field === "theme") { patch.theme_status = "aguardando"; patch.theme_suggestion = null; }
   const { error } = await sb.from(table).update(patch).eq("id", t.dataset.id);
   if (error) alert("Erro ao salvar: " + error.message);
   else { const row = (table === "theme_weeks" ? state.themeWeeks : state.themeItems).find(x => x.id === t.dataset.id); if (row) Object.assign(row, patch); }
