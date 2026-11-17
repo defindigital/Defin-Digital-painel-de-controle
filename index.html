@@ -93,6 +93,13 @@ button,input,select,textarea{font-family:inherit}
 .th-chip{font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap}
 .th-draft{background:#eceff3;color:#5b6876}.th-wait{background:#fbe8cc;color:#9a5a12}.th-ok{background:#e3f4e8;color:#1f6b3a}.th-no{background:#fbe1de;color:#b3392f}
 .th-banner{background:#fff6e5;border:1px solid #f1d49b;margin-bottom:14px}
+.clk-filter{display:flex;gap:8px;margin:10px 0}.clk-on{background:var(--ink)!important;color:#fff!important}
+.clk-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:8px 0 14px}.clk-kpis div{background:#f3f6f9;border-radius:10px;padding:12px;text-align:center}.clk-kpis b{display:block;font-size:24px}.clk-kpis span{font-size:12px;color:#6b7886}
+.clk-h{margin:18px 0 8px;font-size:14px}.clk-h small{font-weight:400;color:#6b7886}
+.clk-chart{display:flex;align-items:flex-end;gap:3px;height:120px;padding-top:16px}.clk-col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%;min-width:0}.clk-col i{display:block;width:100%;background:#1e9e5a;border-radius:3px 3px 0 0;min-height:2px}.clk-col small{font-size:10px;color:#6b7886;margin-top:3px}.clk-n{font-size:10px;color:#3d4b59}
+.clk-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 28px}.clk-row{display:grid;grid-template-columns:minmax(80px,1.1fr) 2fr auto;gap:8px;align-items:center;font-size:13px;margin-bottom:6px}.clk-k{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.clk-bar{background:#e9eef3;border-radius:4px;height:8px;display:block}.clk-bar i{display:block;height:8px;background:#1e9e5a;border-radius:4px}.clk-v small{color:#6b7886}
+.clk-table{width:100%;border-collapse:collapse;font-size:13px}.clk-table th,.clk-table td{text-align:left;padding:7px 8px;border-bottom:1px solid #e6ebf0}
+@media(max-width:720px){.clk-kpis{grid-template-columns:1fr 1fr}.clk-grid{grid-template-columns:1fr}}
 .th-lock{font-size:16px;text-align:center}
 .th-row{display:grid;grid-template-columns:140px 110px 1fr auto auto;gap:8px;align-items:center;margin-bottom:8px}
 .th-row .th-sug{grid-column:1/-1}.th-add{display:grid;grid-template-columns:140px 110px 1fr auto;gap:8px;margin:12px 0}
@@ -396,7 +403,7 @@ const REPORT_SECTIONS = [
 ];
 const app = document.getElementById("app");
 
-let state = { session:null, profile:null, clients:[], selectedClientId:null, months:[], selectedMonth:null, checklist:[], calendarPosts:[], socialInsights:{}, prevSocialInsights:{}, prevMonth:null, monthlyReport:null, proposal:null, billing:null, metaAdsData:null, metaAdsPeriods:[], themeWeeks:[], themeItems:[], thSuggestOpen:null, cmpA:null, cmpB:null, gmnData:null, tab:"resumo", adminTab:"entregaveis", adminView:"hub", hubTab:"lista", recoveryMode:false, forceChangePassword:false, welcomeShown:false };
+let state = { session:null, profile:null, clients:[], selectedClientId:null, months:[], selectedMonth:null, checklist:[], calendarPosts:[], socialInsights:{}, prevSocialInsights:{}, prevMonth:null, monthlyReport:null, proposal:null, billing:null, metaAdsData:null, metaAdsPeriods:[], themeWeeks:[], themeItems:[], linkClicks:[], clkRange:"30", thSuggestOpen:null, cmpA:null, cmpB:null, gmnData:null, tab:"resumo", adminTab:"entregaveis", adminView:"hub", hubTab:"lista", recoveryMode:false, forceChangePassword:false, welcomeShown:false };
 
 async function init(){
   // Detecta se o usuário chegou aqui por um link de recuperação de senha
@@ -440,6 +447,7 @@ async function loadMonthsFor(clientId, isAdmin){
   await loadProposal(clientId);
   await loadMetaAdsPeriods(clientId);
   await loadThemes(clientId);
+  await loadLinkClicks(clientId);
   if (isAdmin) await loadBilling(clientId);
   if (state.selectedMonth) {
     await loadCalendar(state.selectedMonth.id);
@@ -545,6 +553,7 @@ async function loadClientData(clientId){
   await loadProposal(clientId);
   await loadMetaAdsPeriods(clientId);
   await loadThemes(clientId);
+  await loadLinkClicks(clientId);
   if (state.selectedMonth) {
     await loadCalendar(state.selectedMonth.id);
     await loadSocialInsights(state.selectedMonth.id);
@@ -758,6 +767,8 @@ function renderClient(){
     tabContent = gmnFormHtml(false);
   } else if (state.tab === "temas"){
     tabContent = themesClientHtml();
+  } else if (state.tab === "cliques"){
+    tabContent = linkClicksHtml();
   } else if (state.tab === "proposta"){
     tabContent = proposalHtml(false);
   }
@@ -765,6 +776,7 @@ function renderClient(){
   const services = c.services || [];
   const metaAdsTab = services.includes("meta_ads") ? `<button data-tab="metaads" class="${state.tab==="metaads"?"active":""}">Meta Ads</button>` : "";
   const gmnTab = services.includes("gmn") ? `<button data-tab="gmn" class="${state.tab==="gmn"?"active":""}">Google Meu Negócio</button>` : "";
+  const cliquesTab = c.link_slug ? `<button data-tab="cliques" class="${state.tab==="cliques"?"active":""}">Cliques no WhatsApp</button>` : "";
 
   app.innerHTML = topbarHtml(false) + `<div class="shell">
     ${processBannerHtml(c)}
@@ -776,7 +788,7 @@ function renderClient(){
       <button data-tab="temas" class="${state.tab==="temas"?"active":""}">Temas${themesPendingCount()?` (${themesPendingCount()})`:""}</button>
       <button data-tab="calendario" class="${state.tab==="calendario"?"active":""}">Calendário</button>
       ${hasRedes(c) ? `<button data-tab="redes" class="${state.tab==="redes"?"active":""}">Redes sociais</button>` : ""}
-      ${metaAdsTab}${gmnTab}
+      ${metaAdsTab}${gmnTab}${cliquesTab}
       <button data-tab="checklist" class="${state.tab==="checklist"?"active":""}">Planejamento</button>
       <button data-tab="proposta" class="${state.tab==="proposta"?"active":""}">Proposta</button>
     </div>
@@ -1321,6 +1333,8 @@ function renderAdmin(){
     tabContent = gmnFormHtml(true);
   } else if (state.adminTab === "temas"){
     tabContent = themesAdminHtml();
+  } else if (state.adminTab === "cliques"){
+    tabContent = linkClicksHtml();
   } else if (state.adminTab === "proposta"){
     tabContent = proposalHtml(true);
   }
@@ -1328,6 +1342,7 @@ function renderAdmin(){
   const services = (currentClient && currentClient.services) || [];
   const metaAdsTab = services.includes("meta_ads") ? `<button data-admintab="metaads" class="${state.adminTab==="metaads"?"active":""}">Meta Ads</button>` : "";
   const gmnTab = services.includes("gmn") ? `<button data-admintab="gmn" class="${state.adminTab==="gmn"?"active":""}">Google Meu Negócio</button>` : "";
+  const cliquesTab = (currentClient && currentClient.link_slug) ? `<button data-admintab="cliques" class="${state.adminTab==="cliques"?"active":""}">Cliques no WhatsApp</button>` : "";
 
   app.innerHTML = topbarHtml(true) + `<div class="shell">
     ${currentClient ? processStatusAdminHtml(currentClient) : ""}
@@ -1337,7 +1352,7 @@ function renderAdmin(){
       <button data-admintab="temas" class="${state.adminTab==="temas"?"active":""}">Temas${thRefusedCount()?` (${thRefusedCount()}⚠)`:""}</button>
       <button data-admintab="calendario" class="${state.adminTab==="calendario"?"active":""}">Calendário</button>
       ${hasRedes(currentClient) ? `<button data-admintab="redes" class="${state.adminTab==="redes"?"active":""}">Redes sociais</button>` : ""}
-      ${metaAdsTab}${gmnTab}
+      ${metaAdsTab}${gmnTab}${cliquesTab}
       <button data-admintab="checklist" class="${state.adminTab==="checklist"?"active":""}">Checklist</button>
       <button data-admintab="relatorio" class="${state.adminTab==="relatorio"?"active":""}">Relatório</button>
       <button data-admintab="resumo" class="${state.adminTab==="resumo"?"active":""}">Resumo / Cliente</button>
@@ -1685,6 +1700,72 @@ document.addEventListener("change", async e => {
   const { error } = await sb.from(table).update(patch).eq("id", t.dataset.id);
   if (error) alert("Erro ao salvar: " + error.message);
   else { const row = (table === "theme_weeks" ? state.themeWeeks : state.themeItems).find(x => x.id === t.dataset.id); if (row) Object.assign(row, patch); }
+});
+
+
+// ---------- Cliques no link rastreável (WhatsApp) ----------
+const CLK_TZ = "America/Sao_Paulo";
+async function loadLinkClicks(clientId){
+  const { data } = await sb.from("link_clicks").select("clicked_at,link,origem,cidade,estado,aparelho").eq("client_id", clientId).order("clicked_at", { ascending:false }).limit(5000);
+  state.linkClicks = data || [];
+}
+function clkDay(d){ return new Date(d).toLocaleDateString("en-CA", { timeZone: CLK_TZ }); }
+function clkHour(d){ return parseInt(new Date(d).toLocaleString("en-GB", { timeZone: CLK_TZ, hour:"2-digit", hour12:false }), 10) % 24; }
+function clkTop(rows, keyFn, n){
+  const m = new Map(); rows.forEach(r => { const k = keyFn(r) || "Desconhecido"; m.set(k, (m.get(k)||0) + 1); });
+  return [...m.entries()].sort((a,b) => b[1]-a[1]).slice(0, n);
+}
+function clkBars(list, total){
+  if (!list.length) return '<p class="panel-sub">Sem dados no período.</p>';
+  return list.map(([k,v]) => `<div class="clk-row"><span class="clk-k">${thEsc(k)}</span><span class="clk-bar"><i style="width:${Math.max(3, Math.round(v/total*100))}%"></i></span><span class="clk-v">${v} <small>(${Math.round(v/total*100)}%)</small></span></div>`).join("");
+}
+function linkClicksHtml(){
+  const all = state.linkClicks || [];
+  const days = state.clkRange === "all" ? null : Number(state.clkRange);
+  const todayKey = clkDay(new Date());
+  const since = days ? Date.now() - days*86400000 : 0;
+  const rows = all.filter(r => new Date(r.clicked_at).getTime() >= since);
+  const last7 = all.filter(r => new Date(r.clicked_at).getTime() >= Date.now()-7*86400000).length;
+  const today = all.filter(r => clkDay(r.clicked_at) === todayKey).length;
+  const btn = (v,t) => `<button class="save ${state.clkRange===v?"clk-on":""}" data-clk="${v}">${t}</button>`;
+  // por dia (últimos 14 dias, ou o período escolhido se menor)
+  const span = Math.min(days || 30, 30);
+  const perDay = new Map();
+  for (let i = span-1; i >= 0; i--) perDay.set(clkDay(Date.now() - i*86400000), 0);
+  rows.forEach(r => { const k = clkDay(r.clicked_at); if (perDay.has(k)) perDay.set(k, perDay.get(k)+1); });
+  const maxD = Math.max(1, ...perDay.values());
+  const dayBars = [...perDay.entries()].map(([k,v]) => `<div class="clk-col" title="${k.slice(8)}/${k.slice(5,7)}: ${v} clique(s)"><span class="clk-n">${v||""}</span><i style="height:${Math.round(v/maxD*100)}%"></i><small>${k.slice(8)}</small></div>`).join("");
+  const perHour = new Array(24).fill(0); rows.forEach(r => perHour[clkHour(r.clicked_at)]++);
+  const maxH = Math.max(1, ...perHour);
+  const hourBars = perHour.map((v,h) => `<div class="clk-col" title="${h}h: ${v} clique(s)"><span class="clk-n">${v||""}</span><i style="height:${Math.round(v/maxH*100)}%"></i><small>${h}</small></div>`).join("");
+  const peak = perHour.indexOf(Math.max(...perHour));
+  const fmt = d => new Date(d).toLocaleString("pt-BR", { timeZone: CLK_TZ, day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" });
+  const lastRows = rows.slice(0, 15).map(r => `<tr><td>${fmt(r.clicked_at)}</td><td>${thEsc(r.link)}</td><td>${thEsc(r.origem||"—")}</td><td>${thEsc(r.cidade||"—")}${r.estado?" - "+thEsc(r.estado):""}</td><td>${thEsc(r.aparelho||"—")}</td></tr>`).join("");
+  return `<div class="panel">
+    <h3 style="margin-bottom:4px">Cliques no link do WhatsApp</h3>
+    <p class="panel-sub">Cada vez que alguém clica no link rastreável, o clique é contado aqui. Não há dados pessoais: só data, horário, origem, cidade e aparelho. Cliques de robôs de pré-visualização não entram.</p>
+    <div class="clk-filter">${btn("7","7 dias")}${btn("30","30 dias")}${btn("all","Tudo")}</div>
+    <div class="clk-kpis">
+      <div><b>${rows.length}</b><span>cliques no período</span></div>
+      <div><b>${today}</b><span>hoje</span></div>
+      <div><b>${last7}</b><span>últimos 7 dias</span></div>
+      <div><b>${all.length}</b><span>total desde o início</span></div>
+    </div>
+    ${rows.length ? "" : '<p class="panel-sub">Nenhum clique neste período.</p>'}
+    <h4 class="clk-h">Cliques por dia</h4><div class="clk-chart">${dayBars}</div>
+    <h4 class="clk-h">Horário dos cliques ${rows.length ? `<small>(pico: ${peak}h)</small>` : ""}</h4><div class="clk-chart clk-hours">${hourBars}</div>
+    <div class="clk-grid">
+      <div><h4 class="clk-h">De onde vieram</h4>${clkBars(clkTop(rows, r => r.origem, 8), rows.length)}</div>
+      <div><h4 class="clk-h">Qual link</h4>${clkBars(clkTop(rows, r => r.link, 8), rows.length)}</div>
+      <div><h4 class="clk-h">Cidades</h4>${clkBars(clkTop(rows, r => r.cidade ? r.cidade + (r.estado ? " - " + r.estado : "") : "", 8), rows.length)}</div>
+      <div><h4 class="clk-h">Aparelho</h4>${clkBars(clkTop(rows, r => r.aparelho, 8), rows.length)}</div>
+    </div>
+    ${lastRows ? `<h4 class="clk-h">Últimos cliques</h4><div style="overflow:auto"><table class="clk-table"><thead><tr><th>Quando</th><th>Link</th><th>Origem</th><th>Cidade</th><th>Aparelho</th></tr></thead><tbody>${lastRows}</tbody></table></div>` : ""}
+  </div>`;
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest && e.target.closest("[data-clk]");
+  if (b){ state.clkRange = b.dataset.clk; render(); }
 });
 
 // ---------- Meta Ads: períodos (semanais) + comparativo ----------
