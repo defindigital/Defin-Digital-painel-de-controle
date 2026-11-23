@@ -1989,7 +1989,7 @@ function gmnOverviewHtml(){
   return `<div class="panel"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h3 style="margin:0">Google Meu Negócio</h3>${nota}</div>
     <p class="panel-sub">Dados do Desempenho do Perfil da Empresa no Google. Última leitura: ${lido}.</p>
     ${geral ? `<h4 class="clk-h">Visão geral — ${thEsc(geral.periodo||"todos os meses")}</h4>${gmnCards(geral, null)}${gmnDetail(geral)}` : ""}
-    <h4 class="clk-h">Mês atual — ${gmnMesNome(atual.ym)}${atual.parcial?" <small>(parcial, em andamento)</small>":""}</h4>${gmnCards(atual, ant)}${gmnDetail(atual)}
+    <h4 class="clk-h">Mês atual — ${gmnMesNome(atual.ym)}${atual.parcial?" <small>(parcial, em andamento)</small>":""}</h4>${gmnCards(atual, atual.parcial ? null : ant)}${atual.parcial?'<p class="panel-sub">Mês ainda em andamento: a comparação com o mês anterior aparece quando ele fechar.</p>':""}${gmnDetail(atual)}
     ${bars(r => r.visualizacoes, "Visualizações por mês")}${bars(r => gmnInter(r), "Interações por mês")}
     <h4 class="clk-h">Mês a mês</h4><div style="overflow:auto"><table class="clk-table"><thead><tr><th>Mês</th><th>Visualizações</th><th>Buscas</th><th>Interações</th><th>Ligações</th><th>Rotas</th><th>Site</th></tr></thead><tbody>${mesRows}</tbody></table></div>
     <details style="margin-top:12px"><summary style="cursor:pointer;font-weight:600">Ver detalhes de cada mês</summary>${[...meses].reverse().map(r => `<h4 class="clk-h">${gmnMesNome(r.ym)}${r.parcial?" <small>(parcial)</small>":""}</h4>${gmnDetail(r)}`).join("")}</details>
