@@ -98,6 +98,7 @@ button,input,select,textarea{font-family:inherit}
 .clk-h{margin:18px 0 8px;font-size:14px}.clk-h small{font-weight:400;color:#6b7886}
 .clk-chart{display:flex;align-items:flex-end;gap:3px;height:120px;padding-top:16px}.clk-col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%;min-width:0}.clk-col i{display:block;width:100%;background:#1e9e5a;border-radius:3px 3px 0 0;min-height:2px}.clk-col small{font-size:10px;color:#6b7886;margin-top:3px}.clk-n{font-size:10px;color:#3d4b59}
 .clk-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 28px}.clk-row{display:grid;grid-template-columns:minmax(80px,1.1fr) 2fr auto;gap:8px;align-items:center;font-size:13px;margin-bottom:6px}.clk-k{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.clk-bar{background:#e9eef3;border-radius:4px;height:8px;display:block}.clk-bar i{display:block;height:8px;background:#1e9e5a;border-radius:4px}.clk-v small{color:#6b7886}
+.gmn-d{display:block;font-size:11px;margin-top:2px;color:#6b7886}.gmn-up{color:#1e9e5a}.gmn-down{color:#c0392b}.gmn-rate{background:#fff7e0;border-radius:20px;padding:4px 12px;font-weight:700}.gmn-rate small{font-weight:400;color:#6b7886}
 .clk-table{width:100%;border-collapse:collapse;font-size:13px}.clk-table th,.clk-table td{text-align:left;padding:7px 8px;border-bottom:1px solid #e6ebf0}
 @media(max-width:720px){.clk-kpis{grid-template-columns:1fr 1fr}.clk-grid{grid-template-columns:1fr}}
 .th-lock{font-size:16px;text-align:center}
@@ -403,7 +404,7 @@ const REPORT_SECTIONS = [
 ];
 const app = document.getElementById("app");
 
-let state = { session:null, profile:null, clients:[], selectedClientId:null, months:[], selectedMonth:null, checklist:[], calendarPosts:[], socialInsights:{}, prevSocialInsights:{}, prevMonth:null, monthlyReport:null, proposal:null, billing:null, metaAdsData:null, metaAdsPeriods:[], themeWeeks:[], themeItems:[], linkClicks:[], clkRange:"30", thSuggestOpen:null, cmpA:null, cmpB:null, gmnData:null, tab:"resumo", adminTab:"entregaveis", adminView:"hub", hubTab:"lista", recoveryMode:false, forceChangePassword:false, welcomeShown:false };
+let state = { session:null, profile:null, clients:[], selectedClientId:null, months:[], selectedMonth:null, checklist:[], calendarPosts:[], socialInsights:{}, prevSocialInsights:{}, prevMonth:null, monthlyReport:null, proposal:null, billing:null, metaAdsData:null, metaAdsPeriods:[], themeWeeks:[], themeItems:[], linkClicks:[], gmnMonthly:[], clkRange:"30", thSuggestOpen:null, cmpA:null, cmpB:null, gmnData:null, tab:"resumo", adminTab:"entregaveis", adminView:"hub", hubTab:"lista", recoveryMode:false, forceChangePassword:false, welcomeShown:false };
 
 async function init(){
   // Detecta se o usuário chegou aqui por um link de recuperação de senha
@@ -448,6 +449,7 @@ async function loadMonthsFor(clientId, isAdmin){
   await loadMetaAdsPeriods(clientId);
   await loadThemes(clientId);
   await loadLinkClicks(clientId);
+  await loadGmnMonthly(clientId);
   if (isAdmin) await loadBilling(clientId);
   if (state.selectedMonth) {
     await loadCalendar(state.selectedMonth.id);
@@ -554,6 +556,7 @@ async function loadClientData(clientId){
   await loadMetaAdsPeriods(clientId);
   await loadThemes(clientId);
   await loadLinkClicks(clientId);
+  await loadGmnMonthly(clientId);
   if (state.selectedMonth) {
     await loadCalendar(state.selectedMonth.id);
     await loadSocialInsights(state.selectedMonth.id);
@@ -1940,7 +1943,62 @@ function gmnListHtml(list, total){
   const sum = total || list.reduce((a,x)=>a+(x.v||0),0) || 1;
   return list.map(x => `<div class="clk-row"><span class="clk-k">${thEsc(x.k)}</span><span class="clk-bar"><i style="width:${Math.max(3, Math.round(x.v/sum*100))}%"></i></span><span class="clk-v">${x.v} <small>(${Math.round(x.v/sum*100)}%)</small></span></div>`).join("");
 }
+async function loadGmnMonthly(clientId){
+  const { data } = await sb.from("gmn_monthly").select("*").eq("client_id", clientId).order("ym");
+  state.gmnMonthly = data || [];
+}
+const GMN_MESES = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
+function gmnMesNome(ym, curto){ const [y,m] = ym.split("-"); const n = GMN_MESES[Number(m)-1]; return (curto ? n.slice(0,3) : n) + "/" + (curto ? y.slice(2) : y); }
+function gmnInter(r){ return (r.ligacoes||0)+(r.rotas||0)+(r.cliques_site||0)+(r.agendamentos||0); }
+function gmnNum(v){ return v==null ? "—" : Number(v).toLocaleString("pt-BR"); }
+function gmnDelta(cur, prev){
+  if (cur==null || prev==null || prev===0) return "";
+  const d = Math.round((cur-prev)/prev*100);
+  if (d===0) return '<small class="gmn-d">= mês anterior</small>';
+  return `<small class="gmn-d ${d>0?"gmn-up":"gmn-down"}">${d>0?"▲":"▼"} ${Math.abs(d)}% vs mês anterior</small>`;
+}
+function gmnCards(r, prev){
+  const c = (l,v,pv) => `<div class="metric-card"><div class="metric-label">${l}</div><div class="metric-value">${gmnNum(v)}</div>${prev?gmnDelta(v,pv):""}</div>`;
+  return `<div class="metric-grid">
+    ${c("Visualizações do perfil", r.visualizacoes, prev&&prev.visualizacoes)}
+    ${r.buscas!=null?c("Buscas que mostraram o perfil", r.buscas, prev&&prev.buscas):""}
+    ${c("Interações (total)", gmnInter(r), prev&&gmnInter(prev))}
+    ${c("Ligações", r.ligacoes, prev&&prev.ligacoes)}
+    ${c("Solicitações de rota", r.rotas, prev&&prev.rotas)}
+    ${c("Cliques no site", r.cliques_site, prev&&prev.cliques_site)}
+    ${c("Agendamentos", r.agendamentos, prev&&prev.agendamentos)}
+  </div>`;
+}
+function gmnDetail(r){
+  const termos = r.termos && r.termos.length ? gmnListHtml(r.termos, r.termos.reduce((a,x)=>a+x.v,0)) : "";
+  return `<div class="clk-grid" style="margin-top:8px">
+    <div><h4 class="clk-h">Onde encontraram o perfil</h4>${r.plataformas&&r.plataformas.length?gmnListHtml(r.plataformas):'<p class="panel-sub">Sem dados.</p>'}</div>
+    <div><h4 class="clk-h">Principais termos de busca</h4>${termos || '<p class="panel-sub">Ainda sem dados.</p>'}${r.termos_nota?`<p class="panel-sub">${thEsc(r.termos_nota)}</p>`:""}</div>
+  </div>`;
+}
+function gmnOverviewHtml(){
+  const rows = state.gmnMonthly || [];
+  const geral = rows.find(r => r.ym === "geral");
+  const meses = rows.filter(r => r.ym !== "geral").sort((a,b) => a.ym < b.ym ? -1 : 1);
+  if (!meses.length) return null;
+  const atual = meses[meses.length-1], ant = meses.length>1 ? meses[meses.length-2] : null;
+  const nota = (geral && geral.avaliacao_nota!=null) ? `<span class="gmn-rate">${String(geral.avaliacao_nota).replace(".",",")} ★ <small>${geral.avaliacoes_total||""} avaliações</small></span>` : "";
+  const lido = new Date(Math.max(...rows.map(r => new Date(r.lido_em).getTime()))).toLocaleDateString("pt-BR");
+  const mesRows = [...meses].reverse().map(r => `<tr><td><b>${gmnMesNome(r.ym)}</b>${r.parcial?' <small>(parcial)</small>':""}</td><td>${gmnNum(r.visualizacoes)}</td><td>${gmnNum(r.buscas)}</td><td>${gmnNum(gmnInter(r))}</td><td>${gmnNum(r.ligacoes)}</td><td>${gmnNum(r.rotas)}</td><td>${gmnNum(r.cliques_site)}</td></tr>`).join("");
+  const bars = (key, label) => `<h4 class="clk-h">${label}</h4><div class="clk-chart">${meses.map(r => { const mx = Math.max(...meses.map(x => key(x)||0), 1); const v = key(r)||0; return `<div class="clk-col"><span class="clk-n">${gmnNum(key(r))}</span><i style="height:${Math.max(2, Math.round(v/mx*80))}%"></i><small>${gmnMesNome(r.ym,true)}</small></div>`; }).join("")}</div>`;
+  return `<div class="panel"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h3 style="margin:0">Google Meu Negócio</h3>${nota}</div>
+    <p class="panel-sub">Dados do Desempenho do Perfil da Empresa no Google. Última leitura: ${lido}.</p>
+    ${geral ? `<h4 class="clk-h">Visão geral — ${thEsc(geral.periodo||"todos os meses")}</h4>${gmnCards(geral, null)}${gmnDetail(geral)}` : ""}
+    <h4 class="clk-h">Mês atual — ${gmnMesNome(atual.ym)}${atual.parcial?" <small>(parcial, em andamento)</small>":""}</h4>${gmnCards(atual, ant)}${gmnDetail(atual)}
+    ${bars(r => r.visualizacoes, "Visualizações por mês")}${bars(r => gmnInter(r), "Interações por mês")}
+    <h4 class="clk-h">Mês a mês</h4><div style="overflow:auto"><table class="clk-table"><thead><tr><th>Mês</th><th>Visualizações</th><th>Buscas</th><th>Interações</th><th>Ligações</th><th>Rotas</th><th>Site</th></tr></thead><tbody>${mesRows}</tbody></table></div>
+    <details style="margin-top:12px"><summary style="cursor:pointer;font-weight:600">Ver detalhes de cada mês</summary>${[...meses].reverse().map(r => `<h4 class="clk-h">${gmnMesNome(r.ym)}${r.parcial?" <small>(parcial)</small>":""}</h4>${gmnDetail(r)}`).join("")}</details>
+  </div>`;
+}
 function gmnFormHtml(isAdmin){
+  return gmnOverviewHtml() || gmnFormLegacyHtml(isAdmin);
+}
+function gmnFormLegacyHtml(isAdmin){
   const d = state.gmnData || {};
   const num = (f,l) => `<label class="field-label">${l}<input type="number" data-gmn="${f}" value="${d[f]==null?"":d[f]}"></label>`;
   if (isAdmin){
